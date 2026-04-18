@@ -3,8 +3,6 @@
 //  InsightApp
 //
 
-
-
 import SwiftUI
 import MapKit
 import CoreHaptics
@@ -13,15 +11,13 @@ import Combine
 
 // MARK: - TileSourceType
 
-/// Origen real de la observación. Permite al mapa distinguir
-/// entre datos visuales, de movimiento, fusionados y confirmados por el usuario.
 enum TileSourceType: String, Codable, CaseIterable {
-    case camera           = "camera"           // clasificación de CoreML sobre frame de cámara
-    case motion           = "motion"           // acelerómetro / giroscopio (vibración + slope)
-    case fused            = "fused"            // camera + motion en la misma sesión
-    case userConfirmation = "userConfirmation" // el usuario confirmó con thumbs-up/down
-    case mock             = "mock"             // dato generado para demo / tests
-    case remote           = "remote"           // descargado desde Supabase sin más metadatos
+    case camera           = "camera"
+    case motion           = "motion"
+    case fused            = "fused"
+    case userConfirmation = "userConfirmation"
+    case mock             = "mock"
+    case remote           = "remote"
 
     var displayName: String {
         switch self {
@@ -50,38 +46,23 @@ enum TileSourceType: String, Codable, CaseIterable {
 
 struct AccessibilityTile: Identifiable {
     let id: UUID
-
-    // Localización
     var coordinate: CLLocationCoordinate2D
-
-    // Puntuaciones principales
-    var accessibilityScore: Int      // 0-100: puntuación de accesibilidad global
-    var confidenceScore: Double      // 0.0-1.0: certeza del modelo / fuente
-
-    // Puntuaciones granulares  ← NUEVAS
-    var vibrationScore: Double?      // 0.0-1.0: qué tan suave fue la superficie (acelerómetro)
-    var slopeScore: Double?          // 0.0-1.0: qué tan plana está la superficie (giroscopio)
-    var passabilityScore: Double?    // 0.0-1.0: estimación combinada de "se puede pasar"
-
-    // Procedencia  ← NUEVAS / EXPANDIDAS
-    var sourceType: TileSourceType   // origen real del dato
-    var detectedLabel: String?       // etiqueta exacta que devolvió CoreML (e.g. "ramp", "stairs")
-    var profileUsed: String?         // perfil de accesibilidad activo durante el scan
-
-    // Metadata temporal  ← NUEVAS
-    var createdAt: Date              // cuándo se capturó este dato
-    var recencyWeight: Double {      // 0.0-1.0: qué tan "fresco" es el dato
-        // Decae linealmente de 1.0 a 0.0 en 30 días
+    var accessibilityScore: Int
+    var confidenceScore: Double
+    var vibrationScore: Double?
+    var slopeScore: Double?
+    var passabilityScore: Double?
+    var sourceType: TileSourceType
+    var detectedLabel: String?
+    var profileUsed: String?
+    var createdAt: Date
+    var recencyWeight: Double {
         let ageSeconds = Date().timeIntervalSince(createdAt)
         let thirtyDays: Double = 30 * 24 * 3600
         return max(0, 1.0 - (ageSeconds / thirtyDays))
     }
-
-    // Flags heredados
     var reasons: [String]
     var isUserScanned: Bool
-
-    // MARK: Computed
 
     var accessibilityLevel: AccessibilityLevel {
         switch accessibilityScore {
@@ -100,13 +81,9 @@ struct AccessibilityTile: Identifiable {
         }
     }
 
-    /// Puntuación efectiva = score × recencyWeight × confidenceScore
-    /// Útil para ordenar tiles al construir rutas.
     var effectiveScore: Double {
         Double(accessibilityScore) * recencyWeight * confidenceScore
     }
-
-    // MARK: Initializer con defaults para compatibilidad hacia atrás
 
     init(
         id: UUID = UUID(),
@@ -123,19 +100,19 @@ struct AccessibilityTile: Identifiable {
         profileUsed: String? = nil,
         createdAt: Date = Date()
     ) {
-        self.id                = id
-        self.coordinate        = coordinate
+        self.id                 = id
+        self.coordinate         = coordinate
         self.accessibilityScore = accessibilityScore
-        self.confidenceScore   = confidenceScore
-        self.reasons           = reasons
-        self.isUserScanned     = isUserScanned
-        self.vibrationScore    = vibrationScore
-        self.slopeScore        = slopeScore
-        self.passabilityScore  = passabilityScore
-        self.sourceType        = sourceType
-        self.detectedLabel     = detectedLabel
-        self.profileUsed       = profileUsed
-        self.createdAt         = createdAt
+        self.confidenceScore    = confidenceScore
+        self.reasons            = reasons
+        self.isUserScanned      = isUserScanned
+        self.vibrationScore     = vibrationScore
+        self.slopeScore         = slopeScore
+        self.passabilityScore   = passabilityScore
+        self.sourceType         = sourceType
+        self.detectedLabel      = detectedLabel
+        self.profileUsed        = profileUsed
+        self.createdAt          = createdAt
     }
 }
 
@@ -144,9 +121,9 @@ enum AccessibilityLevel {
 
     var color: Color {
         switch self {
-        case .accessible:    return Color(red: 136/255, green: 205/255, blue: 212/255)
-        case .limited:       return Color(red: 255/255, green: 214/255, blue: 102/255)
-        case .notAccessible: return Color(red: 160/255, green: 160/255, blue: 165/255)
+        case .accessible:    return ThemeManager.shared.primaryColor
+        case .limited:       return ThemeManager.shared.secondaryColor
+        case .notAccessible: return ThemeManager.shared.neutralColor
         case .noData:        return Color.clear
         }
     }
@@ -170,19 +147,7 @@ enum AccessibilityLevel {
     }
 }
 
-// MARK: - HeatmapStore  ← Fuente única de verdad (Paso 1)
-//
-// Antes: MapViewModel tenía sus propios mock tiles,
-//        RouteViewModel evaluaba solo HeatmapStore.scannedTiles.
-//        Resultado: el mapa mostraba zonas que la ruta ignoraba.
-//
-// Ahora: HeatmapStore tiene:
-//   • baseTiles   — datos mock del campus (cargados al init)
-//   • scannedTiles — scans del usuario (agregados por ScanView)
-//   • allTiles     — unión; MapView y RouteViewModel leen exclusivamente de aquí
-//
-// Un solo cambio en baseTiles o scannedTiles se propaga automáticamente
-// a cualquier vista que observe `allTiles` vía @Published.
+// MARK: - HeatmapStore
 
 class HeatmapStore: ObservableObject {
     static let shared = HeatmapStore()
@@ -190,14 +155,12 @@ class HeatmapStore: ObservableObject {
     @Published private(set) var baseTiles: [AccessibilityTile] = []
     @Published private(set) var scannedTiles: [AccessibilityTile] = []
 
-    /// Única propiedad que deben leer MapView y RouteViewModel.
     var allTiles: [AccessibilityTile] { baseTiles + scannedTiles }
 
     init() {
         loadBaseTiles()
         let saved = PersistenceService.shared.loadScannedTiles()
         if !saved.isEmpty { scannedTiles = saved }
-        // Remote tiles are loaded by MapView's .task modifier
     }
 
     @MainActor
@@ -208,7 +171,6 @@ class HeatmapStore: ObservableObject {
             )
             guard !remote.isEmpty else { return }
             let existing = allTiles
-            // Dedup: skip any remote tile within ~5 m of an existing tile
             let newTiles = remote
                 .map { $0.toAccessibilityTile() }
                 .filter { remoteTile in
@@ -221,21 +183,18 @@ class HeatmapStore: ObservableObject {
             if !newTiles.isEmpty {
                 baseTiles.append(contentsOf: newTiles)
             }
-        } catch {
-            // Non-fatal; tile fetch failure never blocks UX
-        }
+        } catch {}
     }
 
     private func loadBaseTiles() {
         let origin = CLLocationCoordinate2D(latitude: 25.6714, longitude: -100.3098)
-        // (dlat, dlon, score, conf, reasons, vibration, slope, passability, label)
         let configs: [(Double, Double, Int, Double, [String], Double?, Double?, Double?, String)] = [
-            ( 0.000,  0.000, 85, 0.90, [],                                              0.9, 0.95, 0.90, "flat"),
-            ( 0.001,  0.001, 78, 0.80, [],                                              0.8, 0.85, 0.82, "flat"),
-            ( 0.002, -0.001, 55, 0.60, ["Inclinación detectada"],                       0.6, 0.45, 0.55, "ramp"),
-            ( 0.001, -0.002, 45, 0.50, ["Desvíos frecuentes"],                         0.5, 0.50, 0.48, "ramp"),
-            (-0.001,  0.002, 30, 0.70, ["Vibración elevada", "Desvíos frecuentes"],    0.2, 0.60, 0.30, "obstacle"),
-            (-0.002, -0.001, 20, 0.40, ["Vibración elevada", "Inclinación detectada"], 0.1, 0.30, 0.20, "stairs"),
+            ( 0.000,  0.000, 85, 0.90, [],                                              0.9,  0.95, 0.90, "flat"),
+            ( 0.001,  0.001, 78, 0.80, [],                                              0.8,  0.85, 0.82, "flat"),
+            ( 0.002, -0.001, 55, 0.60, ["Inclinación detectada"],                       0.6,  0.45, 0.55, "ramp"),
+            ( 0.001, -0.002, 45, 0.50, ["Desvíos frecuentes"],                         0.5,  0.50, 0.48, "ramp"),
+            (-0.001,  0.002, 30, 0.70, ["Vibración elevada", "Desvíos frecuentes"],    0.2,  0.60, 0.30, "obstacle"),
+            (-0.002, -0.001, 20, 0.40, ["Vibración elevada", "Inclinación detectada"], 0.1,  0.30, 0.20, "stairs"),
             ( 0.003,  0.002, 90, 0.95, [],                                              0.95, 0.97, 0.93, "flat"),
             (-0.001, -0.003, 60, 0.65, ["Inclinación detectada"],                       0.65, 0.55, 0.60, "ramp"),
             ( 0.002,  0.003, 35, 0.30, ["Vibración elevada"],                           0.25, 0.70, 0.35, "obstacle"),
@@ -264,8 +223,6 @@ class HeatmapStore: ObservableObject {
         }
     }
 
-    /// Agrega un tile escaneado por el usuario.
-    /// Acepta los nuevos campos granulares opcionales.
     func addTile(
         coordinate: CLLocationCoordinate2D,
         score: Int,
@@ -293,7 +250,6 @@ class HeatmapStore: ObservableObject {
             createdAt: Date()
         )
         scannedTiles.append(tile)
-        // Persistencia: guardar inmediatamente al disco
         PersistenceService.shared.saveScannedTiles(scannedTiles)
     }
 }
@@ -307,7 +263,6 @@ class MapViewModel: ObservableObject {
         span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
     )
     @Published var selectedTile: AccessibilityTile? = nil
-    @Published var showLegend = false
     @Published var isLoading = true
     @Published var errorMessage: String? = nil
     @Published var userFeedback: [UUID: Bool] = [:]
@@ -328,7 +283,6 @@ class MapViewModel: ObservableObject {
 
     var hasData: Bool { !HeatmapStore.shared.allTiles.isEmpty }
 
-    // Detecta tiles nuevos del usuario y activa el pulso visual
     func processNewScans(_ scannedTiles: [AccessibilityTile]) {
         for tile in scannedTiles where !knownScannedIDs.contains(tile.id) {
             knownScannedIDs.insert(tile.id)
@@ -381,14 +335,13 @@ class MapViewModel: ObservableObject {
 struct MapView: View {
     @StateObject private var vm = MapViewModel()
     @ObservedObject private var store = HeatmapStore.shared
-    @State private var showScan    = false
-    @State private var showRoute   = false
-    @State private var showProfile = false
+    @EnvironmentObject var themeManager: ThemeManager
+    @State private var showScan        = false
+    @State private var showRoute       = false
+    @State private var showProfile     = false
     @State private var showBottomSheet = false
-    @State private var searchText = ""
+    @State private var searchText      = ""
     @FocusState private var searchFocused: Bool
-
-    let teal = Color(red: 136/255, green: 205/255, blue: 212/255)
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -410,7 +363,7 @@ struct MapView: View {
             .allowsHitTesting(false)
             .ignoresSafeArea()
 
-            // Layer B — transparent tap targets, restricted to circle area
+            // Layer B — transparent tap targets
             GeometryReader { geo in
                 ForEach(store.allTiles.filter { $0.accessibilityLevel != .noData }) { tile in
                     Color.clear
@@ -434,24 +387,31 @@ struct MapView: View {
             }
             .ignoresSafeArea()
 
+            // Search bar top
             VStack(spacing: 0) { searchBar; Spacer() }
 
+            // Leyenda — esquina inferior izquierda (siempre visible)
             VStack {
                 Spacer()
-                HStack { Spacer(); floatingButtonsColumn }
-            }
-            .padding(.trailing, 16)
-            .padding(.bottom, showBottomSheet ? 340 : 100)
-            .animation(.spring(response: 0.4), value: showBottomSheet)
-
-            if vm.showLegend {
-                VStack {
+                HStack {
+                    legendPanel
+                        .padding(.leading, 16)
+                        .padding(.bottom, showBottomSheet ? 340 : 32)
+                        .animation(.spring(response: 0.4), value: showBottomSheet)
                     Spacer()
-                    HStack { legendPanel.padding(.leading, 16); Spacer() }
                 }
-                .padding(.bottom, showBottomSheet ? 360 : 110)
-                .transition(.move(edge: .leading).combined(with: .opacity))
-                .animation(.spring(response: 0.35), value: vm.showLegend)
+            }
+
+            // Botones — esquina inferior derecha
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    floatingButtonsColumn
+                        .padding(.trailing, 16)
+                        .padding(.bottom, showBottomSheet ? 340 : 32)
+                        .animation(.spring(response: 0.4), value: showBottomSheet)
+                }
             }
 
             if !vm.hasData && !vm.isLoading { emptyStateHint }
@@ -465,7 +425,8 @@ struct MapView: View {
                     Spacer()
                     BottomSheetView(
                         tile: tile, isShowing: $showBottomSheet,
-                        userFeedback: $vm.userFeedback, primaryColor: teal
+                        userFeedback: $vm.userFeedback,
+                        primaryColor: themeManager.primaryColor
                     )
                 }
                 .ignoresSafeArea(edges: .bottom)
@@ -477,9 +438,9 @@ struct MapView: View {
         .onChange(of: store.scannedTiles.count) { _, _ in
             Task { @MainActor in vm.processNewScans(store.scannedTiles) }
         }
-        .fullScreenCover(isPresented: $showScan)    { ScanView() }
-        .fullScreenCover(isPresented: $showRoute)   { NavigationStack { RouteView() } }
-        .fullScreenCover(isPresented: $showProfile) { ProfileView() }
+        .fullScreenCover(isPresented: $showScan)    { ScanView().environmentObject(themeManager) }
+        .fullScreenCover(isPresented: $showRoute)   { NavigationStack { RouteView().environmentObject(themeManager) } }
+        .fullScreenCover(isPresented: $showProfile) { ProfileView().environmentObject(themeManager) }
     }
 
     // MARK: Search bar
@@ -505,18 +466,19 @@ struct MapView: View {
 
             Button { showProfile = true } label: {
                 Image(systemName: "person.circle.fill")
-                    .font(.system(size: 34)).foregroundStyle(teal)
+                    .font(.system(size: 34))
+                    .foregroundStyle(themeManager.primaryColor)
                     .background(Circle().fill(.regularMaterial))
                     .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 2)
             }
         }
-        .padding(.horizontal, 16).padding(.top, 56).padding(.bottom, 8)
+        .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 8)
     }
 
-    // MARK: Floating buttons
+    // MARK: Floating buttons (esquina inferior derecha)
 
     var floatingButtonsColumn: some View {
-        VStack(spacing: 12) {
+        VStack(alignment: .trailing, spacing: 12) {
             Button { showRoute = true } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "figure.roll").font(.system(size: 16, weight: .semibold))
@@ -524,32 +486,32 @@ struct MapView: View {
                 }
                 .foregroundColor(.black)
                 .padding(.horizontal, 16).padding(.vertical, 12)
-                .background(teal, in: RoundedRectangle(cornerRadius: 14))
-                .shadow(color: teal.opacity(0.5), radius: 8, x: 0, y: 4)
+                .background(themeManager.primaryColor, in: RoundedRectangle(cornerRadius: 14))
+                .shadow(color: themeManager.primaryColor.opacity(0.5), radius: 8, x: 0, y: 4)
             }
             .accessibilityLabel("Crear ruta accesible")
 
             Button { showScan = true } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "camera.viewfinder").font(.system(size: 16, weight: .semibold))
-                    Text("Scan Area").font(.system(size: 14, weight: .semibold, design: .rounded))
+                    Text("Escanear").font(.system(size: 14, weight: .semibold, design: .rounded))
                 }
                 .foregroundColor(.white)
                 .padding(.horizontal, 16).padding(.vertical, 12)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(teal.opacity(0.5), lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(themeManager.primaryColor.opacity(0.5), lineWidth: 1))
                 .shadow(color: .black.opacity(0.15), radius: 6, x: 0, y: 3)
             }
             .accessibilityLabel("Escanear área")
 
-            FloatingIconButton(icon: "location.fill", color: teal) { vm.centerOnUser() }
-            FloatingIconButton(icon: "square.3.layers.3d", color: vm.showLegend ? teal : .secondary) {
-                withAnimation { vm.showLegend.toggle() }
+            HStack(spacing: 8) {
+                FloatingIconButton(icon: "location.fill", color: themeManager.primaryColor) { vm.centerOnUser() }
+                FloatingIconButton(icon: "square.3.layers.3d", color: themeManager.primaryColor) {}
             }
         }
     }
 
-    // MARK: Legend
+    // MARK: Legend (esquina inferior izquierda)
 
     var legendPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -571,7 +533,7 @@ struct MapView: View {
 
     var emptyStateHint: some View {
         VStack(spacing: 6) {
-            Image(systemName: "map").font(.system(size: 22)).foregroundColor(teal)
+            Image(systemName: "map").font(.system(size: 22)).foregroundColor(themeManager.primaryColor)
             Text("Muévete o escanea para generar datos")
                 .font(.system(size: 14, weight: .medium, design: .rounded))
                 .foregroundColor(.secondary)
@@ -584,7 +546,7 @@ struct MapView: View {
         VStack {
             Spacer()
             HStack {
-                ProgressView().tint(teal).scaleEffect(0.8)
+                ProgressView().tint(themeManager.primaryColor).scaleEffect(0.8)
                 Text("Cargando datos...").font(.system(size: 12, design: .rounded)).foregroundColor(.secondary)
             }
             .padding(.horizontal, 14).padding(.vertical, 8)
@@ -642,8 +604,6 @@ struct HeatmapTileView: View {
 
     let tileRadius: CGFloat = 72
     var tileColor: Color { tile.accessibilityLevel.color }
-
-    /// La opacidad base se reduce para datos viejos (recencyWeight < 0.3 = más de 21 días)
     var baseOpacity: Double { max(0.18, tile.recencyWeight * 0.42) }
 
     var body: some View {
@@ -733,10 +693,10 @@ struct BottomSheetView: View {
 
     func typeIcon(from reasons: [String]) -> String {
         guard let first = reasons.first?.lowercased() else { return "camera.fill" }
-        if first.contains("rampa")    { return "road.lanes" }
-        if first.contains("escalera") { return "figure.stairs" }
-        if first.contains("obstáculo"){ return "exclamationmark.triangle.fill" }
-        if first.contains("plana")    { return "checkmark.seal.fill" }
+        if first.contains("rampa")     { return "road.lanes" }
+        if first.contains("escalera")  { return "figure.stairs" }
+        if first.contains("obstáculo") { return "exclamationmark.triangle.fill" }
+        if first.contains("plana")     { return "checkmark.seal.fill" }
         return "camera.fill"
     }
 
@@ -780,13 +740,11 @@ struct BottomSheetView: View {
             }
             .padding(.horizontal, 20)
 
-            // ── Fuente y timestamp ──────────────────────────────────────────
             HStack(spacing: 12) {
                 Label(tile.sourceType.displayName, systemImage: tile.sourceType.icon)
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundColor(.secondary)
                 Spacer()
-                // Recency badge
                 let rw = tile.recencyWeight
                 let recencyColor: Color = rw > 0.7 ? .green : (rw > 0.3 ? .orange : .red)
                 Label(dateFormatter.string(from: tile.createdAt), systemImage: "clock")
@@ -796,14 +754,12 @@ struct BottomSheetView: View {
             .padding(.horizontal, 20)
             .padding(.top, 8)
 
-            // ── Puntuaciones granulares ─────────────────────────────────────
             if tile.vibrationScore != nil || tile.slopeScore != nil || tile.passabilityScore != nil {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Detalles de superficie")
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundColor(.secondary)
                         .padding(.top, 16)
-
                     HStack(spacing: 12) {
                         if let v = tile.vibrationScore {
                             MiniScoreChip(label: "Vibración", value: v, icon: "waveform.path", color: statusColor)
@@ -863,7 +819,6 @@ struct BottomSheetView: View {
                 }
             }
 
-            // Perfil usado
             if let profile = tile.profileUsed {
                 HStack(spacing: 6) {
                     Image(systemName: "person.fill").font(.system(size: 11)).foregroundColor(.secondary)
@@ -907,12 +862,11 @@ struct BottomSheetView: View {
     }
 }
 
-// MARK: - MiniScoreChip (nuevo)
+// MARK: - MiniScoreChip
 
-/// Chip compacto para mostrar vibrationScore, slopeScore, passabilityScore en el BottomSheet.
 struct MiniScoreChip: View {
     let label: String
-    let value: Double   // 0.0 - 1.0
+    let value: Double
     let icon: String
     let color: Color
 
@@ -949,4 +903,4 @@ struct FeedbackButton: View {
     }
 }
 
-#Preview { MapView() }
+#Preview { MapView().environmentObject(ThemeManager.shared) }
