@@ -205,6 +205,17 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
             reasons: reasons
         )
 
+        // Persist to Supabase collective layer (fire-and-forget)
+        if let lastTile = HeatmapStore.shared.scannedTiles.last {
+            Task {
+                await SupabaseService.shared.saveTile(
+                    lastTile,
+                    label: result.label,
+                    profile: ProfileService.shared.current
+                )
+            }
+        }
+
         withAnimation {
             showSuccess = true
         }

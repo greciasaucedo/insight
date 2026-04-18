@@ -96,9 +96,30 @@ class HeatmapStore: ObservableObject {
 
     init() {
         loadBaseTiles()
-        // Persistencia (Item 12): restaurar scans del usuario al arrancar la app
+        // Restaurar scans locales del usuario al arrancar la app
         let saved = PersistenceService.shared.loadScannedTiles()
         if !saved.isEmpty { scannedTiles = saved }
+        // Cargar capa comunitaria desde Supabase
+        Task { await loadCommunityTiles() }
+    }
+
+    @MainActor
+    func loadCommunityTiles() async {
+        let origin = baseTiles.first?.coordinate ?? CLLocationCoordinate2D(latitude: 25.6714, longitude: -100.3098)
+        let remote = await SupabaseService.shared.fetchNearbyTiles(lat: origin.latitude, lng: origin.longitude)
+        guard !remote.isEmpty else { return }
+        // Merge: only add tiles not already represented locally (by proximity)
+        let existing = allTiles
+        let newTiles = remote.filter { remoteTile in
+            !existing.contains { local in
+                let dLat = abs(local.coordinate.latitude  - remoteTile.coordinate.latitude)
+                let dLng = abs(local.coordinate.longitude - remoteTile.coordinate.longitude)
+                return dLat < 0.0002 && dLng < 0.0002
+            }
+        }
+        if !newTiles.isEmpty {
+            baseTiles.append(contentsOf: newTiles)
+        }
     }
 
     private func loadBaseTiles() {

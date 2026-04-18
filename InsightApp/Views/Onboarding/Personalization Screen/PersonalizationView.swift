@@ -62,6 +62,11 @@ struct PersonalizationView: View {
                     .background(themeManager.primaryColor)
                     .cornerRadius(16)
             }
+            .simultaneousGesture(TapGesture().onEnded {
+                let profile = AccessibilityProfile.from(options: selectedOptions)
+                ProfileService.shared.current = profile
+                Task { await SupabaseService.shared.saveProfile(profile) }
+            })
             .padding(.horizontal, 24)
             .padding(.bottom, 32)
         }

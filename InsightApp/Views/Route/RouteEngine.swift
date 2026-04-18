@@ -110,9 +110,13 @@ final class RouteEngine {
 
     // MARK: Evaluate
 
-    /// Evalúa una ruta contra un array de tiles.
+    /// Evalúa una ruta contra un array de tiles con penalizaciones adaptadas al perfil del usuario.
     /// Llama con `HeatmapStore.shared.allTiles` para garantizar consistencia.
-    static func evaluate(route: MKRoute, tiles: [AccessibilityTile]) -> RouteEvaluation {
+    static func evaluate(
+        route: MKRoute,
+        tiles: [AccessibilityTile],
+        profile: AccessibilityProfile = ProfileService.shared.current
+    ) -> RouteEvaluation {
         let routePoints = extractPoints(from: route.polyline)
         var score  = 100
         var impacts: [TileImpact] = []
@@ -120,7 +124,7 @@ final class RouteEngine {
         for tile in tiles {
             let dist = minDistance(from: tile.coordinate, toRoutePoints: routePoints)
             guard dist <= proximityThreshold else { continue }
-            let penalty = penaltyFor(tile: tile)
+            let penalty = penaltyFor(tile: tile, profile: profile)
             if penalty > 0 {
                 score -= penalty
                 impacts.append(TileImpact(tile: tile, penalty: penalty, distanceToRoute: dist))
@@ -134,6 +138,12 @@ final class RouteEngine {
         let notAccessible = impacts.filter { $0.tile.accessibilityLevel == .notAccessible }.count
         let limited       = impacts.filter { $0.tile.accessibilityLevel == .limited       }.count
         let userScanned   = impacts.filter { $0.tile.isUserScanned                        }.count
+
+        // Mensaje personalizado por perfil
+        let profileImpactedLabel = impacts.first?.tile.reasons.first
+        if let msg = AccessibilityScoringService.explanationMessage(for: profileImpactedLabel, profile: profile) {
+            explanations.append(msg)
+        }
 
         if notAccessible > 0 {
             explanations.append("Cruza \(notAccessible) zona\(notAccessible > 1 ? "s" : "") no accesible\(notAccessible > 1 ? "s" : "")")
@@ -164,15 +174,15 @@ final class RouteEngine {
 
     // MARK: Penalty
 
-    private static func penaltyFor(tile: AccessibilityTile) -> Int {
-        var base: Int
-        switch tile.accessibilityLevel {
-        case .notAccessible: base = 25
-        case .limited:       base = 10
-        case .accessible:    return 0
-        case .noData:        return 0
-        }
-        if tile.isUserScanned  { base = Int(Double(base) * 1.4) }   // +40% si lo escaneó el usuario
+    private static func penaltyFor(tile: AccessibilityTile, profile: AccessibilityProfile) -> Int {
+        let label = tile.reasons.first  // use first reason as label hint
+        var base = AccessibilityScoringService.penalty(
+            for: tile.accessibilityLevel,
+            label: label,
+            profile: profile
+        )
+        guard base > 0 else { return 0 }
+        if tile.isUserScanned         { base = Int(Double(base) * 1.4) }   // +40% si lo escaneó el usuario
         if tile.confidenceScore < 0.4 { base = Int(Double(base) * 0.6) }  // -40% si confianza baja
         return base
     }

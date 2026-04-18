@@ -6,20 +6,17 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct ProfileView: View {
-    
+
     @EnvironmentObject var themeManager: ThemeManager
+    @AppStorage("didFinishOnboarding") private var didFinishOnboarding = false
     @State private var highContrast = true
     @State private var voiceGuidance = false
     @State private var hapticFeedback = true
     @State private var selectedColorMode: ColorAccessibilityMode = .defaultMode
-
-    let accessibilityOptions = [
-        "Movilidad limitada",
-        "Daltonismo",
-        "Adulto mayor"
-    ]
+    @State private var selectedProfile: AccessibilityProfile = ProfileService.shared.current
 
     var body: some View {
         NavigationStack {
@@ -44,17 +41,17 @@ struct ProfileView: View {
 
     private var headerSection: some View {
         VStack(spacing: 14) {
-            Image(systemName: "person.crop.circle.fill")
+            Image(systemName: selectedProfile.icon)
                 .font(.system(size: 72))
                 .foregroundStyle(themeManager.primaryColor)
 
             VStack(spacing: 4) {
-                Text("Grecia Saucedo")
-                    .font(.system(size: 26, weight: .bold))
-
-                Text("+52 81 1234 5678")
-                    .font(.system(size: 16, weight: .medium))
+                Text("Perfil activo")
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.secondary)
+
+                Text(selectedProfile.displayName)
+                    .font(.system(size: 26, weight: .bold))
             }
 
             Text("Administra tu información, preferencias y accesibilidad en Insight.")
@@ -126,18 +123,32 @@ struct ProfileView: View {
     }
 
     private var accessibilitySection: some View {
-        profileCard(title: "Tus necesidades de accesibilidad", icon: "accessibility") {
+        profileCard(title: "Perfil de movilidad", icon: "accessibility") {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Personalizamos Insight según la forma en que te mueves por la ciudad.")
+                Text("Insight adapta las rutas y penalizaciones según tu perfil.")
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
 
-                FlexibleTagView(tags: accessibilityOptions, primaryColor: themeManager.primaryColor)
-
-                Button(action: {}) {
-                    Text("Editar preferencias")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(themeManager.primaryColor)
+                ForEach(AccessibilityProfile.allCases) { profile in
+                    Button(action: {
+                        selectedProfile = profile
+                        ProfileService.shared.current = profile
+                        Task { await SupabaseService.shared.saveProfile(profile) }
+                    }) {
+                        HStack(spacing: 12) {
+                            Image(systemName: profile.icon)
+                                .foregroundStyle(selectedProfile == profile ? themeManager.primaryColor : .secondary)
+                                .frame(width: 24)
+                            Text(profile.displayName)
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Image(systemName: selectedProfile == profile ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(selectedProfile == profile ? themeManager.primaryColor : .secondary.opacity(0.4))
+                                .font(.system(size: 20))
+                        }
+                        .padding(.vertical, 4)
+                    }
                 }
             }
         }
@@ -160,7 +171,11 @@ struct ProfileView: View {
                 PermissionStatusRow(title: "Cámara", icon: "camera.fill", status: "Activado", statusColor: .green)
                 PermissionStatusRow(title: "Movimiento", icon: "figure.walk.motion", status: "Activado", statusColor: .green)
 
-                Button(action: {}) {
+                Button(action: {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                }) {
                     Text("Abrir configuración")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(themeManager.primaryColor)
@@ -181,7 +196,9 @@ struct ProfileView: View {
                     accountRow(title: "Cambiar contraseña", icon: "key.fill")
                 }
 
-                Button(action: {}) {
+                Button(action: {
+                    didFinishOnboarding = false
+                }) {
                     HStack(spacing: 10) {
                         Image(systemName: "rectangle.portrait.and.arrow.right")
                             .foregroundStyle(.red)

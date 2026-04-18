@@ -251,12 +251,25 @@ struct RouteView: View {
 
                 Spacer()
 
-                // Hint de tiles cargados
-                HStack(spacing: 6) {
-                    Circle().fill(teal).frame(width: 7, height: 7)
-                    Text("\(store.allTiles.count) zonas en el mapa")
-                        .font(.system(size: 12, design: .rounded))
-                        .foregroundColor(.secondary)
+                // Profile badge + tile count
+                HStack(spacing: 12) {
+                    HStack(spacing: 5) {
+                        Image(systemName: vm.activeProfile.icon)
+                            .font(.system(size: 11))
+                            .foregroundColor(teal)
+                        Text(vm.activeProfile.displayName)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundColor(teal)
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(teal.opacity(0.12), in: Capsule())
+
+                    HStack(spacing: 6) {
+                        Circle().fill(teal).frame(width: 7, height: 7)
+                        Text("\(store.allTiles.count) zonas en el mapa")
+                            .font(.system(size: 12, design: .rounded))
+                            .foregroundColor(.secondary)
+                    }
                 }
                 .padding(.bottom, 36)
             }

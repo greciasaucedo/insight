@@ -18,6 +18,7 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
 
     @Published var selectedDestination: MockDestination? = nil
     @Published var selectedMode: RouteMode = .accessible
+    @Published var activeProfile: AccessibilityProfile = ProfileService.shared.current
     @Published var fastestEvaluation: RouteEvaluation?    = nil
     @Published var accessibleEvaluation: RouteEvaluation? = nil
     @Published var isLoading = false
@@ -89,7 +90,9 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
     private func reevaluateWithCurrentTiles() {
         guard !cachedMKRoutes.isEmpty else { return }
         let tiles = HeatmapStore.shared.allTiles
-        let evaluations = cachedMKRoutes.map { RouteEngine.evaluate(route: $0, tiles: tiles) }
+        let profile = ProfileService.shared.current
+        activeProfile = profile
+        let evaluations = cachedMKRoutes.map { RouteEngine.evaluate(route: $0, tiles: tiles, profile: profile) }
 
         let prevFastest    = fastestEvaluation?.accessibilityScore
         let prevAccessible = accessibleEvaluation?.accessibilityScore
@@ -187,7 +190,9 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
                 self.cachedMKRoutes = response.routes
 
                 let tiles = HeatmapStore.shared.allTiles        // ← usa allTiles
-                let evaluations = response.routes.map { RouteEngine.evaluate(route: $0, tiles: tiles) }
+                let profile = ProfileService.shared.current
+                self.activeProfile = profile
+                let evaluations = response.routes.map { RouteEngine.evaluate(route: $0, tiles: tiles, profile: profile) }
 
                 self.fastestEvaluation = evaluations.first
                 self.accessibleEvaluation = evaluations.count > 1
@@ -229,8 +234,10 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
         cachedMKRoutes = [directRoute, detourRoute]
 
         let tiles = HeatmapStore.shared.allTiles                // ← usa allTiles
-        fastestEvaluation    = RouteEngine.evaluate(route: directRoute, tiles: tiles)
-        accessibleEvaluation = RouteEngine.evaluate(route: detourRoute, tiles: tiles)
+        let profile = ProfileService.shared.current
+        activeProfile = profile
+        fastestEvaluation    = RouteEngine.evaluate(route: directRoute, tiles: tiles, profile: profile)
+        accessibleEvaluation = RouteEngine.evaluate(route: detourRoute, tiles: tiles, profile: profile)
 
         // Si no hay tiles aún, inyectar scores narrativos para el demo
         if tiles.isEmpty {

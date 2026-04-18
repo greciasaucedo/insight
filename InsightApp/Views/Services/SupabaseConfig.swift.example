@@ -1,0 +1,19 @@
+//
+//  SupabaseConfig.swift.example
+//  InsightApp
+//
+//  HOW TO USE:
+//  1. Copy this file and rename the copy to: SupabaseConfig.swift
+//  2. Replace the placeholder values with your actual Supabase credentials
+//  3. Never commit SupabaseConfig.swift — it is listed in .gitignore
+//
+//  WHERE TO FIND YOUR VALUES:
+//  - Go to https://supabase.com → your project → Settings → API
+//  - "Project URL"  → projectURL
+//  - "anon public"  → anonKey
+//
+
+enum SupabaseConfig {
+    static let projectURL = "https://YOUR_PROJECT_ID.supabase.co"
+    static let anonKey    = "YOUR_ANON_KEY_HERE"
+}

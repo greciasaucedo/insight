@@ -6,14 +6,18 @@
 //
 
 import SwiftUI
+import CoreLocation
+import AVFoundation
+import CoreMotion
 
 struct AllowsView: View {
-    
-    // Controla si ya terminó onboarding
+
     @AppStorage("didFinishOnboarding") private var didFinishOnboarding = false
-    
     @EnvironmentObject var themeManager: ThemeManager
-    
+
+    private let locationManager = CLLocationManager()
+    private let motionManager   = CMMotionActivityManager()
+
     var body: some View {
         VStack(spacing: 24) {
             
@@ -61,7 +65,7 @@ struct AllowsView: View {
             VStack(spacing: 12) {
                 
                 Button(action: {
-                    // Aquí luego puedes pedir permisos reales
+                    requestAllPermissions()
                     didFinishOnboarding = true
                 }) {
                     Text("Permitir acceso")
@@ -72,9 +76,8 @@ struct AllowsView: View {
                         .background(themeManager.primaryColor)
                         .cornerRadius(16)
                 }
-                
+
                 Button(action: {
-                    // También permite continuar sin permisos
                     didFinishOnboarding = true
                 }) {
                     Text("Ahora no")
@@ -90,6 +93,14 @@ struct AllowsView: View {
             .padding(.bottom, 32)
         }
         .background(Color(.systemBackground))
+    }
+
+    private func requestAllPermissions() {
+        locationManager.requestWhenInUseAuthorization()
+        AVCaptureDevice.requestAccess(for: .video) { _ in }
+        if CMMotionActivityManager.isActivityAvailable() {
+            motionManager.queryActivityStarting(from: Date(), to: Date(), to: .main) { _, _ in }
+        }
     }
 }
 
