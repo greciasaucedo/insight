@@ -197,6 +197,7 @@ struct ProfileView: View {
                 }
 
                 Button(action: {
+                    PersistenceService.shared.clearAll()
                     didFinishOnboarding = false
                 }) {
                     HStack(spacing: 10) {

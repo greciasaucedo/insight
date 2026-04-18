@@ -14,10 +14,8 @@ struct InsightAppApp: App {
     
     var body: some Scene {
         WindowGroup {
-            NavigationStack {
-                ContentView()
-            }
-            .environmentObject(themeManager)
+            ContentView()
+                .environmentObject(themeManager)
         }
     }
 }
