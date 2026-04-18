@@ -11,6 +11,7 @@ struct ContentView: View {
 
     // Guarda si el usuario ya terminó el onboarding
     @AppStorage("didFinishOnboarding") private var didFinishOnboarding = false
+    @StateObject private var themeManager = ThemeManager()
 
     var body: some View {
         if didFinishOnboarding {
@@ -20,6 +21,7 @@ struct ContentView: View {
             // Si no → muestra onboarding
             NavigationStack {
                 WelcomeView()
+                    .environmentObject(themeManager)
             }
         }
     }

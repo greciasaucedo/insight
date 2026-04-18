@@ -9,7 +9,7 @@ import SwiftUI
 
 struct PurposeView: View {
     
-    let primaryColor = Color(red: 136/255, green: 205/255, blue: 212/255) // #88CDD4
+    @EnvironmentObject var themeManager: ThemeManager
     
     var body: some View {
         VStack(spacing: 28) {
@@ -50,17 +50,19 @@ struct PurposeView: View {
             Spacer()
                 .frame(height: 60)
             
-                NavigationLink(destination: SignUpView()){
+            NavigationLink {
+                SignUpView()
+            } label: {
                 Text("Continuar")
                     .font(.headline)
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .padding()
-                    .background(primaryColor)
+                    .background(themeManager.primaryColor)
                     .cornerRadius(16)
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, 40)
+            .padding(.bottom, 4)
             
         }
         .background(Color(.systemBackground))

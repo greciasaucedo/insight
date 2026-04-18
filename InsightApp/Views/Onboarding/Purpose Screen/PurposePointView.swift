@@ -10,7 +10,7 @@ struct PurposePointView: View {
 
     let icon: String
     let text: String
-    let primaryColor = Color(red: 136/255, green: 205/255, blue: 212/255)
+    @EnvironmentObject var themeManager: ThemeManager
     
     var body: some View {
         HStack(spacing: 14) {

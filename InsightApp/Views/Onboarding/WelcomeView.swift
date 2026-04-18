@@ -8,8 +8,8 @@
 import SwiftUI
 
 struct WelcomeView : View {
-    
-    let primaryColor = Color(red: 136/255, green: 205/255, blue: 212/255) // #88CDD4
+        
+    @EnvironmentObject var themeManager: ThemeManager
     
     var body: some View {
         VStack(spacing: 20) {
@@ -30,7 +30,7 @@ struct WelcomeView : View {
                 .padding(.horizontal, 32)
             
             //Subtitle
-            Text("Lorem ipsum...")
+            Text("Mapa que se adapta a ti")
                 .font(.system(size: 22))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -43,7 +43,7 @@ struct WelcomeView : View {
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding()
-                    .background(primaryColor)
+                    .background(themeManager.primaryColor)
                     .foregroundColor(.white)
                     .cornerRadius(16)
             }

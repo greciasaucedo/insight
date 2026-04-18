@@ -8,7 +8,7 @@ import SwiftUI
 
 struct PersonalizationView: View {
     
-    let primaryColor = Color(red: 136/255, green: 205/255, blue: 212/255) // #88CDD4
+    @EnvironmentObject var themeManager: ThemeManager
     
     @State private var selectedOptions: Set<AccessibilityOption> = []
     
@@ -42,7 +42,7 @@ struct PersonalizationView: View {
                         SelectionCardView(
                             option: option,
                             isSelected: selectedOptions.contains(option),
-                            primaryColor: primaryColor
+                            primaryColor: themeManager.primaryColor
                         )
                         .onTapGesture {
                             toggleSelection(for: option)
@@ -59,7 +59,7 @@ struct PersonalizationView: View {
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .padding()
-                    .background(primaryColor)
+                    .background(themeManager.primaryColor)
                     .cornerRadius(16)
             }
             .padding(.horizontal, 24)

@@ -9,9 +9,15 @@ import SwiftUI
 
 @main
 struct InsightAppApp: App {
+    
+    @StateObject private var themeManager = ThemeManager()
+    
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            NavigationStack {
+                ContentView()
+            }
+            .environmentObject(themeManager)
         }
     }
 }

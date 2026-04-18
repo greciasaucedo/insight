@@ -13,8 +13,7 @@ struct SignUpView: View {
     @State private var phoneNumber = ""
     @State private var password = ""
     @State private var showPassword = false
-    
-    let primaryColor = Color(red: 136/255, green: 205/255, blue: 212/255) // #88CDD4
+    @EnvironmentObject var themeManager: ThemeManager
     
     var body: some View {
         ScrollView {
@@ -93,7 +92,7 @@ struct SignUpView: View {
                                 showPassword.toggle()
                             }) {
                                 Image(systemName: showPassword ? "eye.slash.fill" : "eye.fill")
-                                    .foregroundStyle(primaryColor)
+                                    .foregroundStyle(themeManager.primaryColor)
                             }
                         }
                         .padding()
@@ -110,7 +109,7 @@ struct SignUpView: View {
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(primaryColor)
+                        .background(themeManager.primaryColor)
                         .cornerRadius(16)
                 }
                 .padding(.horizontal, 24)
@@ -123,7 +122,7 @@ struct SignUpView: View {
                     NavigationLink(destination: LoginView()){
                         Text("Inicia sesión")
                             .fontWeight(.semibold)
-                            .foregroundStyle(primaryColor)
+                            .foregroundStyle(themeManager.primaryColor)
                     }
                 }
                 .font(.system(size: 16))

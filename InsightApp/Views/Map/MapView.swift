@@ -336,7 +336,9 @@ struct MapView: View {
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
             .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 3)
 
-            Button { } label: {
+            NavigationLink {
+                ProfileView()
+            } label: {
                 Image(systemName: "person.circle.fill")
                     .font(.system(size: 34)).foregroundStyle(teal)
                     .background(Circle().fill(.regularMaterial))

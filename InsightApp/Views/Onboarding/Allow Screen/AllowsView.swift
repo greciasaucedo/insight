@@ -12,7 +12,7 @@ struct AllowsView: View {
     // Controla si ya terminó onboarding
     @AppStorage("didFinishOnboarding") private var didFinishOnboarding = false
     
-    let primaryColor = Color(red: 136/255, green: 205/255, blue: 212/255) // #88CDD4
+    @EnvironmentObject var themeManager: ThemeManager
     
     var body: some View {
         VStack(spacing: 24) {
@@ -69,7 +69,7 @@ struct AllowsView: View {
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(primaryColor)
+                        .background(themeManager.primaryColor)
                         .cornerRadius(16)
                 }
                 
@@ -79,7 +79,7 @@ struct AllowsView: View {
                 }) {
                     Text("Ahora no")
                         .font(.headline)
-                        .foregroundColor(primaryColor)
+                        .foregroundColor(themeManager.primaryColor)
                         .frame(maxWidth: .infinity)
                         .padding()
                         .background(Color(.secondarySystemBackground))

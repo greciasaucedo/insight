@@ -12,14 +12,14 @@ struct AllowCardView: View {
     let title: String
     let description: String
     
-    let primaryColor = Color(red: 136/255, green: 205/255, blue: 212/255)
+    @EnvironmentObject var themeManager: ThemeManager
     
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
             
             Image(systemName: icon)
                 .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(primaryColor)
+                .foregroundStyle(themeManager.primaryColor)
                 .frame(width: 34)
             
             VStack(alignment: .leading, spacing: 6) {

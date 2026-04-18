@@ -30,13 +30,6 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		4EB6D00A2F937A640036D7FE /* Exceptions for "InsightApp" folder in "InsightApp" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = 142A7F632F93403B0026A142 /* InsightApp */;
-		};
 		4EB6D00C2F9381470036D7FE /* Exceptions for "InsightAppUITests" folder in "InsightAppUITests" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -49,9 +42,6 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		142A7F662F93403B0026A142 /* InsightApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				4EB6D00A2F937A640036D7FE /* Exceptions for "InsightApp" folder in "InsightApp" target */,
-			);
 			path = InsightApp;
 			sourceTree = "<group>";
 		};
@@ -415,7 +405,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = VWUWR4BNBX;
+				DEVELOPMENT_TEAM = 5QU7DX383G;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -438,7 +428,6 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.3;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.iMakers.InsightApp;
-				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = com.lira.accesslayer;
 				"PRODUCT_BUNDLE_IDENTIFIER[sdk=xros*]" = com.lira.accesslayer;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -462,7 +451,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = VWUWR4BNBX;
+				DEVELOPMENT_TEAM = 5QU7DX383G;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -485,7 +474,6 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.3;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.iMakers.InsightApp;
-				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = com.lira.accesslayer;
 				"PRODUCT_BUNDLE_IDENTIFIER[sdk=xros*]" = com.lira.accesslayer;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -508,7 +496,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = VWUWR4BNBX;
+				DEVELOPMENT_TEAM = 5QU7DX383G;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
 				MACOSX_DEPLOYMENT_TARGET = 26.3;
@@ -534,7 +522,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = VWUWR4BNBX;
+				DEVELOPMENT_TEAM = 5QU7DX383G;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
 				MACOSX_DEPLOYMENT_TARGET = 26.3;
@@ -559,7 +547,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = VWUWR4BNBX;
+				DEVELOPMENT_TEAM = 5QU7DX383G;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = InsightAppUITests/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "";
@@ -568,7 +556,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.3;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.iMakers.InsightAppUITests;
-				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = com.guillermolira.insightapp.uitests;
+				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = com.iMakers.InsightApp;
 				"PRODUCT_BUNDLE_IDENTIFIER[sdk=xros*]" = com.guillermolira.insightapp.uitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
@@ -589,7 +577,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = VWUWR4BNBX;
+				DEVELOPMENT_TEAM = 5QU7DX383G;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = InsightAppUITests/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "";
@@ -598,7 +586,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.3;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.iMakers.InsightAppUITests;
-				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = com.guillermolira.insightapp.uitests;
+				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = com.iMakers.InsightApp;
 				"PRODUCT_BUNDLE_IDENTIFIER[sdk=xros*]" = com.guillermolira.insightapp.uitests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
