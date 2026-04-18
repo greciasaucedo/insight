@@ -274,6 +274,29 @@ class HeatmapStore: ObservableObject {
             baseTiles[index].sourceType = .userConfirmation
         }
     }
+    func updateScannedTile(id: UUID, applying validation: UserValidation) {
+        guard let idx = scannedTiles.firstIndex(where: { $0.id == id }) else { return }
+        let old = scannedTiles[idx]
+        let newScore = validation.isPositive
+            ? max(old.accessibilityScore, 70)
+            : min(old.accessibilityScore, 35)
+        scannedTiles[idx] = AccessibilityTile(
+            id:                 old.id,
+            coordinate:         old.coordinate,
+            accessibilityScore: newScore,
+            confidenceScore:    min(1.0, old.confidenceScore + 0.15),
+            reasons:            old.reasons + [validation.passExperience.label],
+            isUserScanned:      true,
+            vibrationScore:     old.vibrationScore,
+            slopeScore:         old.slopeScore,
+            passabilityScore:   validation.derivedPassabilityScore,
+            sourceType:         .userConfirmation,
+            detectedLabel:      old.detectedLabel,
+            profileUsed:        old.profileUsed,
+            createdAt:          old.createdAt
+        )
+        PersistenceService.shared.saveScannedTiles(scannedTiles)
+    }
 }
 // MARK: - Map ViewModel
 
