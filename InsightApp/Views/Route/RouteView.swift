@@ -9,9 +9,7 @@
 import SwiftUI
 import MapKit
 
-// MARK: - Route Map Overlay
-// Renderiza polylines y heatmap sobre un Map de SwiftUI.
-// Se usa UIViewRepresentable porque SwiftUI Map no expone overlays en iOS 16.
+// MARK: - Route Map (UIViewRepresentable)
 
 struct RouteMapView: UIViewRepresentable {
     let region: MKCoordinateRegion
@@ -19,7 +17,7 @@ struct RouteMapView: UIViewRepresentable {
     let alternativeEvaluation: RouteEvaluation?
     let heatmapTiles: [AccessibilityTile]
 
-    let primaryColor = UIColor(red: 136/255, green: 205/255, blue: 212/255, alpha: 1)
+    private let tealUI = UIColor(red: 136/255, green: 205/255, blue: 212/255, alpha: 1)
 
     func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
@@ -36,115 +34,103 @@ struct RouteMapView: UIViewRepresentable {
         map.removeOverlays(map.overlays)
         map.removeAnnotations(map.annotations.filter { !($0 is MKUserLocation) })
 
-        // Actualizar región si cambió
-        if !regionsEqual(map.region, region) {
+        if !regionsApproxEqual(map.region, region) {
             map.setRegion(region, animated: true)
         }
 
         // Heatmap circles
         for tile in heatmapTiles where tile.accessibilityLevel != .noData {
             let circle = MKCircle(center: tile.coordinate, radius: 55)
-            circle.title = tileOverlayTitle(tile)
+            circle.title = tile.accessibilityLevel.rawOverlayID
             map.addOverlay(circle, level: .aboveRoads)
         }
 
-        // Ruta alternativa (gris, debajo)
+        // Ruta alternativa primero (debajo)
         if let alt = alternativeEvaluation {
-            let overlay = RouteOverlay(polyline: alt.route.polyline, isActive: false)
-            map.addOverlay(overlay, level: .aboveRoads)
+            map.addOverlay(RoutePolylineOverlay(polyline: alt.route.polyline, isActive: false), level: .aboveRoads)
         }
-
-        // Ruta activa (color primario, encima)
+        // Ruta activa encima
         if let active = activeEvaluation {
-            let overlay = RouteOverlay(polyline: active.route.polyline, isActive: true)
-            map.addOverlay(overlay, level: .aboveRoads)
-
-            // Pin de destino
-            if let lastCoord = RouteEngine.extractPoints(from: active.route.polyline).last {
-                let annotation = MKPointAnnotation()
-                annotation.coordinate = lastCoord
-                annotation.title = "Destino"
-                map.addAnnotation(annotation)
+            map.addOverlay(RoutePolylineOverlay(polyline: active.route.polyline, isActive: true), level: .aboveRoads)
+            if let last = RouteEngine.extractPoints(from: active.route.polyline).last {
+                let pin = MKPointAnnotation()
+                pin.coordinate = last
+                pin.title = "Destino"
+                map.addAnnotation(pin)
             }
         }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(primaryColor: primaryColor) }
+    func makeCoordinator() -> Coordinator { Coordinator(tealUI: tealUI) }
 
-    private func tileOverlayTitle(_ tile: AccessibilityTile) -> String {
-        switch tile.accessibilityLevel {
+    private func regionsApproxEqual(_ a: MKCoordinateRegion, _ b: MKCoordinateRegion) -> Bool {
+        abs(a.center.latitude - b.center.latitude) < 0.0001 &&
+        abs(a.center.longitude - b.center.longitude) < 0.0001
+    }
+
+    final class Coordinator: NSObject, MKMapViewDelegate {
+        let tealUI: UIColor
+        init(tealUI: UIColor) { self.tealUI = tealUI }
+
+        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            if let circle = overlay as? MKCircle {
+                let r = MKCircleRenderer(circle: circle)
+                r.lineWidth = 0
+                r.fillColor = uiColor(for: circle.title)
+                return r
+            }
+            if let ro = overlay as? RoutePolylineOverlay {
+                let r = MKPolylineRenderer(polyline: ro)
+
+                if ro.isActive {
+                    r.strokeColor = tealUI
+                    r.lineWidth = 5
+                    r.lineCap = CGLineCap.round
+                    r.lineJoin = CGLineJoin.round
+                } else {
+                    r.strokeColor = UIColor.systemGray3.withAlphaComponent(0.6)
+                    r.lineWidth = 3
+                    r.lineDashPattern = [8, 6]
+                }
+
+                return r
+            }
+            return MKOverlayRenderer(overlay: overlay)
+        }
+
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            guard !(annotation is MKUserLocation) else { return nil }
+            let v = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: "dest")
+            v.markerTintColor = tealUI
+            v.glyphImage = UIImage(systemName: "mappin.circle.fill")
+            return v
+        }
+
+        private func uiColor(for id: String?) -> UIColor {
+            switch id {
+            case "accessible":    return UIColor(red: 136/255, green: 205/255, blue: 212/255, alpha: 0.35)
+            case "limited":       return UIColor(red: 255/255, green: 214/255, blue: 102/255, alpha: 0.35)
+            case "notAccessible": return UIColor(red: 160/255, green: 160/255, blue: 165/255, alpha: 0.40)
+            default:              return .clear
+            }
+        }
+    }
+}
+
+// Helper para exponer un String ID desde AccessibilityLevel
+extension AccessibilityLevel {
+    var rawOverlayID: String {
+        switch self {
         case .accessible:    return "accessible"
         case .limited:       return "limited"
         case .notAccessible: return "notAccessible"
         case .noData:        return "noData"
         }
     }
-
-    private func regionsEqual(_ a: MKCoordinateRegion, _ b: MKCoordinateRegion) -> Bool {
-        abs(a.center.latitude  - b.center.latitude)  < 0.0001 &&
-        abs(a.center.longitude - b.center.longitude) < 0.0001
-    }
-
-    // MARK: - Coordinator
-
-    final class Coordinator: NSObject, MKMapViewDelegate {
-        let primaryColor: UIColor
-
-        init(primaryColor: UIColor) { self.primaryColor = primaryColor }
-
-        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
-
-            // Heatmap circles
-            if let circle = overlay as? MKCircle {
-                let renderer = MKCircleRenderer(circle: circle)
-                renderer.lineWidth = 0
-                switch circle.title {
-                case "accessible":
-                    renderer.fillColor = UIColor(red: 136/255, green: 205/255, blue: 212/255, alpha: 0.35)
-                case "limited":
-                    renderer.fillColor = UIColor(red: 255/255, green: 214/255, blue: 102/255, alpha: 0.35)
-                case "notAccessible":
-                    renderer.fillColor = UIColor(red: 160/255, green: 160/255, blue: 165/255, alpha: 0.40)
-                default:
-                    renderer.fillColor = .clear
-                }
-                return renderer
-            }
-
-            // Route polylines
-            if let routeOverlay = overlay as? RouteOverlay {
-                let renderer = MKPolylineRenderer(polyline: routeOverlay)
-                if routeOverlay.isActive {
-                    renderer.strokeColor = primaryColor
-                    renderer.lineWidth   = 5
-                    renderer.lineCap     = .round
-                    renderer.lineJoin    = .round
-                } else {
-                    renderer.strokeColor = UIColor.systemGray3.withAlphaComponent(0.7)
-                    renderer.lineWidth   = 3
-                    renderer.lineCap     = .round
-                    renderer.lineDashPattern = [8, 6]
-                }
-                return renderer
-            }
-
-            return MKOverlayRenderer(overlay: overlay)
-        }
-
-        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-            guard !(annotation is MKUserLocation) else { return nil }
-            let view = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: "dest")
-            view.markerTintColor = primaryColor
-            view.glyphImage = UIImage(systemName: "mappin.circle.fill")
-            return view
-        }
-    }
 }
 
-// RouteOverlay: wrapper para diferenciar activa de alternativa
-final class RouteOverlay: MKPolyline {
-    var isActive: Bool = false
-
+final class RoutePolylineOverlay: MKPolyline {
+    var isActive = false
     convenience init(polyline: MKPolyline, isActive: Bool) {
         var coords = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid, count: polyline.pointCount)
         polyline.getCoordinates(&coords, range: NSRange(location: 0, length: polyline.pointCount))
@@ -153,108 +139,127 @@ final class RouteOverlay: MKPolyline {
     }
 }
 
-// MARK: - Main Route View
+// MARK: - Main RouteView
 
 struct RouteView: View {
     @StateObject private var vm = RouteViewModel()
-    @ObservedObject private var heatmapStore = HeatmapStore.shared
+    @ObservedObject private var store = HeatmapStore.shared
     @Environment(\.dismiss) private var dismiss
 
-    let primaryColor = Color(red: 136/255, green: 205/255, blue: 212/255)
+    let teal = Color(red: 136/255, green: 205/255, blue: 212/255)
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Color(UIColor.systemBackground).ignoresSafeArea()
-
-            if vm.selectedDestination == nil {
-                // Pantalla de selección de destino
+        ZStack {
+            if vm.isRouteActive {
+                // PASO 3 — Pantalla de ruta activa
+                ActiveRouteView(vm: vm, teal: teal)
+                    .transition(.asymmetric(
+                        insertion: .push(from: .bottom),
+                        removal: .push(from: .top)
+                    ))
+            } else if vm.selectedDestination == nil {
                 destinationPicker
+                    .transition(.opacity)
             } else {
-                // Pantalla de ruta con mapa
                 routeScreen
+                    .transition(.asymmetric(
+                        insertion: .push(from: .trailing),
+                        removal: .push(from: .leading)
+                    ))
             }
         }
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: vm.isRouteActive)
+        .animation(.spring(response: 0.4), value: vm.selectedDestination == nil)
         .navigationBarHidden(true)
     }
 
     // MARK: - Destination Picker
 
     var destinationPicker: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Button { dismiss() } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(.primary)
-                        .frame(width: 40, height: 40)
-                        .background(.regularMaterial, in: Circle())
+        ZStack(alignment: .top) {
+            Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // Header
+                HStack {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.secondary)
+                            .frame(width: 36, height: 36)
+                            .background(.regularMaterial, in: Circle())
+                    }
+                    Spacer()
+                    Text("Ruta accesible")
+                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    Spacer()
+                    Color.clear.frame(width: 36, height: 36)
                 }
-                .accessibilityLabel("Volver al mapa")
+                .padding(.horizontal, 20)
+                .padding(.top, 60)
+                .padding(.bottom, 28)
+
+                // Origen mock
+                HStack(spacing: 14) {
+                    ZStack {
+                        Circle().fill(teal.opacity(0.15)).frame(width: 36, height: 36)
+                        Circle().fill(teal).frame(width: 10, height: 10)
+                            .overlay(Circle().stroke(.white, lineWidth: 2))
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Tu ubicación").font(.system(size: 15, weight: .semibold, design: .rounded))
+                        Text("Punto de partida").font(.system(size: 13, design: .rounded)).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Text("Actual").font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundColor(teal)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(teal.opacity(0.12), in: Capsule())
+                }
+                .padding(16)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .padding(.horizontal, 20)
+
+                // Divisor con línea punteada
+                HStack {
+                    Spacer().frame(width: 38)
+                    Rectangle().fill(Color.secondary.opacity(0.2))
+                        .frame(width: 1.5, height: 20)
+                    Spacer()
+                }
+                .padding(.leading, 20)
+
+                // Label destinos
+                HStack {
+                    Text("Elige un destino")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 10)
+
+                VStack(spacing: 10) {
+                    ForEach(MockDestination.all) { dest in
+                        Button { vm.select(destination: dest) } label: {
+                            DestinationRow(destination: dest, teal: teal)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 20)
+                    }
+                }
 
                 Spacer()
 
-                Text("Ruta accesible")
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
-
-                Spacer()
-                Color.clear.frame(width: 40, height: 40)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 56)
-            .padding(.bottom, 24)
-
-            // Tarjeta origen
-            VStack(alignment: .leading, spacing: 12) {
-                Label {
-                    Text("¿A dónde quieres ir?")
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
-                } icon: {
-                    Image(systemName: "location.fill")
-                        .foregroundColor(primaryColor)
-                        .font(.system(size: 14))
-                }
-
-                HStack(spacing: 10) {
-                    Circle()
-                        .fill(primaryColor.opacity(0.2))
-                        .frame(width: 10, height: 10)
-                        .overlay(Circle().stroke(primaryColor, lineWidth: 1.5))
-
-                    Text("Tu ubicación")
-                        .font(.system(size: 14, design: .rounded))
+                // Hint de tiles cargados
+                HStack(spacing: 6) {
+                    Circle().fill(teal).frame(width: 7, height: 7)
+                    Text("\(store.allTiles.count) zonas en el mapa")
+                        .font(.system(size: 12, design: .rounded))
                         .foregroundColor(.secondary)
                 }
-                .padding(.leading, 2)
-
-                Rectangle()
-                    .fill(Color.secondary.opacity(0.15))
-                    .frame(width: 1.5, height: 16)
-                    .padding(.leading, 4)
+                .padding(.bottom, 36)
             }
-            .padding(18)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-            .padding(.horizontal, 20)
-
-            // Destinos
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Destinos disponibles")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 28)
-
-                ForEach(MockDestination.all) { dest in
-                    Button { vm.select(destination: dest) } label: {
-                        DestinationCard(destination: dest, primaryColor: primaryColor)
-                    }
-                    .padding(.horizontal, 20)
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Ir a \(dest.name), \(dest.subtitle)")
-                }
-            }
-
-            Spacer()
         }
     }
 
@@ -262,48 +267,43 @@ struct RouteView: View {
 
     var routeScreen: some View {
         VStack(spacing: 0) {
-            // Header con origen/destino
+            // Header
             routeHeader
-                .background(.regularMaterial)
-                .zIndex(2)
 
-            // Mapa — ocupa la mitad superior
-            ZStack {
-                if let activeEval = vm.activeEvaluation {
+            // Mapa
+            ZStack(alignment: .topLeading) {
+                if let active = vm.activeEvaluation {
                     RouteMapView(
                         region: vm.mapRegion,
-                        activeEvaluation: activeEval,
+                        activeEvaluation: active,
                         alternativeEvaluation: vm.alternativeEvaluation,
-                        heatmapTiles: allTiles
+                        heatmapTiles: store.allTiles          // ← allTiles
                     )
                 } else {
-                    // Skeleton mientras carga
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.08))
-                        .overlay(
-                            ProgressView().tint(primaryColor)
-                        )
+                    Rectangle().fill(Color.secondary.opacity(0.07))
+                        .overlay(ProgressView().tint(teal))
+                }
+
+                // PASO 2: Banner "Ruta actualizada"
+                if vm.routeJustUpdated {
+                    routeUpdatedBanner
+                        .padding(12)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
             .frame(maxWidth: .infinity)
-            .frame(height: UIScreen.main.bounds.height * 0.38)
+            .frame(height: UIScreen.main.bounds.height * 0.36)
+            .clipped()
 
-            // Panel inferior con resumen y CTA
-            ScrollView {
-                VStack(spacing: 16) {
-                    // Selector de modo
-                    modePicker
-                        .padding(.top, 20)
+            // Panel inferior
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 14) {
+                    modePicker.padding(.top, 18)
 
-                    // Tarjeta resumen
                     if vm.isLoading {
                         loadingCard
                     } else if let eval = vm.activeEvaluation {
                         summaryCard(eval: eval)
-                    }
-
-                    // Botón CTA
-                    if vm.activeEvaluation != nil {
                         ctaButton
                     }
                 }
@@ -315,73 +315,66 @@ struct RouteView: View {
         .ignoresSafeArea(edges: .top)
     }
 
-    // MARK: - Route Header
+    // MARK: Route header
 
     var routeHeader: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Button {
-                    withAnimation(.spring(response: 0.35)) { vm.reset() }
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(.primary)
-                        .frame(width: 38, height: 38)
-                        .background(.regularMaterial, in: Circle())
+        HStack(spacing: 12) {
+            Button {
+                withAnimation(.spring(response: 0.35)) { vm.reset() }
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .frame(width: 36, height: 36)
+                    .background(.regularMaterial, in: Circle())
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    Circle().fill(teal).frame(width: 7, height: 7)
+                    Text("Tu ubicación")
+                        .font(.system(size: 12, design: .rounded)).foregroundColor(.secondary)
                 }
-                .accessibilityLabel("Cambiar destino")
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(primaryColor.opacity(0.25))
-                            .frame(width: 8, height: 8)
-                            .overlay(Circle().stroke(primaryColor, lineWidth: 1.2))
-                        Text("Tu ubicación")
-                            .font(.system(size: 12, design: .rounded))
-                            .foregroundColor(.secondary)
-                    }
-
-                    HStack(spacing: 6) {
-                        Image(systemName: vm.selectedDestination?.icon ?? "mappin")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(primaryColor)
-                        Text(vm.selectedDestination?.name ?? "")
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .foregroundColor(.primary)
-                    }
-                }
-
-                Spacer()
-
-                // Mini score badge
-                if let eval = vm.activeEvaluation {
-                    VStack(spacing: 1) {
-                        Text("\(eval.accessibilityScore)")
-                            .font(.system(size: 20, weight: .black, design: .rounded))
-                            .foregroundColor(eval.accessibilityColor.color)
-                        Text("score")
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(width: 52, height: 52)
-                    .background(eval.accessibilityColor.color.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(eval.accessibilityColor.color.opacity(0.25), lineWidth: 1))
+                HStack(spacing: 5) {
+                    Image(systemName: vm.selectedDestination?.icon ?? "mappin")
+                        .font(.system(size: 11, weight: .semibold)).foregroundColor(teal)
+                    Text(vm.selectedDestination?.name ?? "")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 56)
-            .padding(.bottom, 14)
+
+            Spacer()
+
+            // Score badge
+            if let eval = vm.activeEvaluation {
+                VStack(spacing: 1) {
+                    Text("\(eval.accessibilityScore)")
+                        .font(.system(size: 19, weight: .black, design: .rounded))
+                        .foregroundColor(eval.accessibilityColor.color)
+                        .contentTransition(.numericText())           // ← animación numérica al reevaluar
+                        .animation(.spring(response: 0.4), value: eval.accessibilityScore)
+                    Text("score")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundColor(.secondary)
+                }
+                .frame(width: 50, height: 50)
+                .background(eval.accessibilityColor.color.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12)
+                    .stroke(eval.accessibilityColor.color.opacity(0.25), lineWidth: 1))
+            }
         }
+        .padding(.horizontal, 16)
+        .padding(.top, 58)
+        .padding(.bottom, 12)
+        .background(.regularMaterial)
     }
 
-    // MARK: - Mode Picker
+    // MARK: Mode picker
 
     var modePicker: some View {
         HStack(spacing: 0) {
             ForEach(RouteMode.allCases) { mode in
                 let isSelected = vm.selectedMode == mode
-
                 Button { vm.switchMode(to: mode) } label: {
                     HStack(spacing: 6) {
                         Image(systemName: mode.icon)
@@ -392,211 +385,403 @@ struct RouteView: View {
                     .foregroundColor(isSelected ? .black : .secondary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
-                    .background(
-                        isSelected
-                            ? primaryColor
-                            : Color.clear
-                    )
+                    .background(isSelected ? teal : .clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 11))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("\(mode.rawValue)\(isSelected ? ", seleccionado" : "")")
             }
         }
-        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.15), lineWidth: 0.5))
+        .padding(3)
+        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
         .animation(.spring(response: 0.3), value: vm.selectedMode)
     }
 
-    // MARK: - Summary Card
+    // MARK: Summary card
 
     func summaryCard(eval: RouteEvaluation) -> some View {
         VStack(spacing: 0) {
-            // Métricas top
+            // 3 métricas
             HStack(spacing: 0) {
-                MetricCell(
-                    value: eval.distanceText,
-                    label: "Distancia",
-                    icon: "ruler",
-                    color: primaryColor
-                )
+                MetricCell(value: eval.distanceText,          label: "Distancia",    icon: "ruler",       color: teal)
                 Divider().frame(height: 44)
-                MetricCell(
-                    value: eval.timeText,
-                    label: "Tiempo est.",
-                    icon: "clock",
-                    color: primaryColor
-                )
+                MetricCell(value: eval.timeText,              label: "Tiempo est.",  icon: "clock",       color: teal)
                 Divider().frame(height: 44)
-                MetricCell(
-                    value: "\(eval.accessibilityScore)",
-                    label: eval.accessibilityLabel,
-                    icon: "figure.roll",
-                    color: eval.accessibilityColor.color
-                )
+                MetricCell(value: "\(eval.accessibilityScore)", label: eval.accessibilityLabel,
+                           icon: "figure.roll", color: eval.accessibilityColor.color)
             }
             .padding(.vertical, 16)
+            .animation(.spring(response: 0.4), value: eval.accessibilityScore)
 
             Divider().padding(.horizontal, 16)
 
-            // Explicación — por qué se eligió esta ruta
-            VStack(alignment: .leading, spacing: 12) {
+            // Explicaciones
+            VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 6) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(primaryColor)
+                        .font(.system(size: 12, weight: .semibold)).foregroundColor(teal)
                     Text("Por qué esta ruta")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded)).foregroundColor(.secondary)
                 }
                 .padding(.top, 14)
 
-                ForEach(eval.explanations, id: \.self) { explanation in
-                    ExplanationRow(text: explanation, color: eval.accessibilityColor.color)
+                ForEach(eval.explanations, id: \.self) { exp in
+                    ExplanationRow(text: exp, color: eval.accessibilityColor.color)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
+            .padding(.horizontal, 16).padding(.bottom, 16)
 
-            // Comparativa con la otra ruta (si existe y es diferente)
+            // Comparativa
             if let alt = vm.alternativeEvaluation,
                alt.accessibilityScore != eval.accessibilityScore {
                 Divider().padding(.horizontal, 16)
-
                 HStack(spacing: 8) {
                     Image(systemName: vm.selectedMode == .accessible ? "bolt.fill" : "figure.roll")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-
-                    Text("Ruta alternativa: score \(alt.accessibilityScore) · \(alt.distanceText) · \(alt.timeText)")
-                        .font(.system(size: 12, design: .rounded))
-                        .foregroundColor(.secondary)
-
+                        .font(.system(size: 12)).foregroundColor(.secondary)
+                    Text("Alternativa: score \(alt.accessibilityScore) · \(alt.distanceText) · \(alt.timeText)")
+                        .font(.system(size: 12, design: .rounded)).foregroundColor(.secondary)
                     Spacer()
-
                     Button {
                         vm.switchMode(to: vm.selectedMode == .accessible ? .fastest : .accessible)
                     } label: {
-                        Text("Ver")
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundColor(primaryColor)
+                        Text("Ver").font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundColor(teal)
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 16).padding(.vertical, 10)
             }
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.secondary.opacity(0.12), lineWidth: 0.5))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            "Ruta \(vm.selectedMode.rawValue.lowercased()). " +
-            "\(eval.distanceText), \(eval.timeText). " +
-            "\(eval.accessibilityLabel), score \(eval.accessibilityScore). " +
-            "Explicación: \(eval.explanations.joined(separator: ". "))"
-        )
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.secondary.opacity(0.1), lineWidth: 0.5))
     }
 
-    // MARK: - Loading Card
-
-    var loadingCard: some View {
-        VStack(spacing: 14) {
-            ProgressView().tint(primaryColor).scaleEffect(1.2)
-            Text("Calculando ruta accesible...")
-                .font(.system(size: 14, weight: .medium, design: .rounded))
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(32)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    // MARK: - CTA Button
+    // MARK: CTA button
 
     var ctaButton: some View {
-        Button {
-            // Para hackathon: dismiss y mostrar confirmación
-            // En producción: iniciaría navegación turn-by-turn
-        } label: {
+        Button { vm.startRoute() } label: {
             HStack(spacing: 10) {
-                Image(systemName: "figure.walk")
-                    .font(.system(size: 16, weight: .bold))
-                Text("Usar esta ruta")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                Image(systemName: "figure.walk").font(.system(size: 16, weight: .bold))
+                Text("Usar esta ruta").font(.system(size: 17, weight: .bold, design: .rounded))
             }
             .foregroundColor(.black)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 18)
-            .background(primaryColor, in: RoundedRectangle(cornerRadius: 16))
-            .shadow(color: primaryColor.opacity(0.4), radius: 10, x: 0, y: 4)
+            .background(teal, in: RoundedRectangle(cornerRadius: 16))
+            .shadow(color: teal.opacity(0.4), radius: 10, x: 0, y: 4)
         }
-        .accessibilityLabel("Iniciar ruta \(vm.selectedMode.rawValue.lowercased())")
     }
 
-    // MARK: - Helpers
+    // MARK: Misc
 
-    var allTiles: [AccessibilityTile] {
-        heatmapStore.scannedTiles
+    var loadingCard: some View {
+        VStack(spacing: 14) {
+            ProgressView().tint(teal).scaleEffect(1.2)
+            Text("Calculando ruta accesible...")
+                .font(.system(size: 14, weight: .medium, design: .rounded)).foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity).padding(32)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    // PASO 2: Banner que aparece cuando un nuevo scan afecta el score de la ruta
+    var routeUpdatedBanner: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle().fill(teal.opacity(0.2)).frame(width: 30, height: 30)
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 13, weight: .semibold)).foregroundColor(teal)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Ruta actualizada")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                Text("Nuevo scan afecta el trayecto")
+                    .font(.system(size: 11, design: .rounded)).foregroundColor(.secondary)
+            }
+            Spacer()
+            if let eval = vm.activeEvaluation {
+                Text("\(eval.accessibilityScore)")
+                    .font(.system(size: 16, weight: .black, design: .rounded))
+                    .foregroundColor(eval.accessibilityColor.color)
+                    .contentTransition(.numericText())
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 2)
+    }
+}
+
+// MARK: - PASO 3: Active Route View
+//
+// Pantalla que se muestra después de tap en "Usar esta ruta".
+// Diseño Apple-level: mapa arriba, panel de glass abajo con estado completo.
+// Muestra: destino, tiempo restante, score, zonas evitadas, botón parar.
+
+struct ActiveRouteView: View {
+    @ObservedObject var vm: RouteViewModel
+    @ObservedObject private var store = HeatmapStore.shared
+    let teal: Color
+
+    @State private var elapsedSeconds = 0
+    @State private var timer: Timer? = nil
+    @State private var pulseScale: CGFloat = 1.0
+
+    var eval: RouteEvaluation? { vm.activeEvaluation }
+
+    var remainingTime: String {
+        guard let eval else { return "--" }
+        let total = Int(eval.route.expectedTravelTime)
+        let remaining = max(0, total - elapsedSeconds)
+        let m = remaining / 60
+        let s = remaining % 60
+        if m > 0 { return "\(m) min" }
+        return "\(s) s"
+    }
+
+    var progressFraction: Double {
+        guard let eval else { return 0 }
+        let total = eval.route.expectedTravelTime
+        return min(1.0, Double(elapsedSeconds) / total)
+    }
+
+    var notAccessibleCount: Int {
+        eval?.tilesNearby.filter { $0.tile.accessibilityLevel == .notAccessible }.count ?? 0
+    }
+
+    var limitedCount: Int {
+        eval?.tilesNearby.filter { $0.tile.accessibilityLevel == .limited }.count ?? 0
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            // Mapa de fondo
+            if let active = eval {
+                RouteMapView(
+                    region: vm.mapRegion,
+                    activeEvaluation: active,
+                    alternativeEvaluation: nil,
+                    heatmapTiles: store.allTiles
+                )
+                .ignoresSafeArea()
+            } else {
+                Color.black.ignoresSafeArea()
+            }
+
+            // Glass panel inferior
+            VStack(spacing: 0) {
+                // Handle
+                Capsule()
+                    .fill(Color.secondary.opacity(0.3))
+                    .frame(width: 36, height: 5)
+                    .padding(.top, 10).padding(.bottom, 18)
+
+                // Destino + modo
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle().fill(teal.opacity(0.15)).frame(width: 44, height: 44)
+                        Image(systemName: vm.selectedDestination?.icon ?? "mappin")
+                            .font(.system(size: 18, weight: .semibold)).foregroundColor(teal)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(vm.selectedDestination?.name ?? "Destino")
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
+                        Text("Ruta \(vm.selectedMode.rawValue.lowercased())")
+                            .font(.system(size: 13, design: .rounded)).foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    // Indicador de navegación activa
+                    HStack(spacing: 5) {
+                        Circle().fill(teal)
+                            .frame(width: 8, height: 8)
+                            .scaleEffect(pulseScale)
+                            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true),
+                                       value: pulseScale)
+                        Text("En ruta")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundColor(teal)
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(teal.opacity(0.12), in: Capsule())
+                }
+                .padding(.horizontal, 20)
+
+                // Barra de progreso
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.secondary.opacity(0.12))
+                        Capsule().fill(teal)
+                            .frame(width: geo.size.width * progressFraction)
+                            .animation(.linear(duration: 1), value: progressFraction)
+                    }
+                }
+                .frame(height: 4)
+                .padding(.horizontal, 20).padding(.vertical, 16)
+
+                // Métricas en tiempo real
+                HStack(spacing: 0) {
+                    ActiveMetric(
+                        value: remainingTime,
+                        label: "Tiempo rest.",
+                        icon: "clock.fill",
+                        color: teal
+                    )
+                    Divider().frame(height: 40)
+                    ActiveMetric(
+                        value: eval?.distanceText ?? "--",
+                        label: "Distancia",
+                        icon: "ruler.fill",
+                        color: teal
+                    )
+                    Divider().frame(height: 40)
+                    ActiveMetric(
+                        value: eval.map { "\($0.accessibilityScore)" } ?? "--",
+                        label: eval?.accessibilityLabel ?? "Score",
+                        icon: "figure.roll",
+                        color: eval?.accessibilityColor.color ?? teal
+                    )
+                }
+                .padding(.horizontal, 16)
+
+                Divider().padding(.horizontal, 20).padding(.top, 16)
+
+                // Zonas evitadas / info de accesibilidad
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(.system(size: 16)).foregroundColor(teal)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(avoidanceText)
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        if let firstExp = eval?.explanations.first {
+                            Text(firstExp)
+                                .font(.system(size: 12, design: .rounded)).foregroundColor(.secondary)
+                        }
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 20).padding(.top, 14)
+
+                // PASO 2 en ruta activa: si cambia el score, mostrar aviso
+                if vm.routeJustUpdated {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 13)).foregroundColor(.orange)
+                        Text("Nuevo scan cerca — ruta reevaluada")
+                            .font(.system(size: 12, design: .rounded)).foregroundColor(.orange)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 20).padding(.top, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+
+                // Botón parar ruta
+                Button {
+                    timer?.invalidate()
+                    vm.stopRoute()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "stop.circle.fill").font(.system(size: 16, weight: .bold))
+                        Text("Parar ruta").font(.system(size: 16, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(Color(red: 1, green: 0.28, blue: 0.28), in: RoundedRectangle(cornerRadius: 14))
+                }
+                .padding(.horizontal, 20).padding(.top, 18)
+                .accessibilityLabel("Parar la ruta activa")
+
+                Spacer(minLength: 36)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 28)
+                    .fill(.regularMaterial)
+                    .shadow(color: .black.opacity(0.14), radius: 24, x: 0, y: -6)
+            )
+            .ignoresSafeArea(edges: .bottom)
+        }
+        .onAppear {
+            pulseScale = 1.3
+            startTimer()
+        }
+        .onDisappear { timer?.invalidate() }
+        // PASO 2: reevaluar métricas cuando cambia el score durante navegación
+        .onChange(of: vm.routeJustUpdated) { _, _ in }
+    }
+
+    private var avoidanceText: String {
+        if notAccessibleCount == 0 && limitedCount == 0 {
+            return "Sin obstáculos en el trayecto"
+        }
+        var parts: [String] = []
+        if notAccessibleCount > 0 { parts.append("\(notAccessibleCount) zona\(notAccessibleCount > 1 ? "s" : "") evitada\(notAccessibleCount > 1 ? "s" : "")") }
+        if limitedCount > 0       { parts.append("\(limitedCount) tramo\(limitedCount > 1 ? "s" : "") limitado\(limitedCount > 1 ? "s" : "")") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func startTimer() {
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            guard let eval else { return }
+            if elapsedSeconds < Int(eval.route.expectedTravelTime) {
+                elapsedSeconds += 1
+            }
+        }
+    }
+}
+
+struct ActiveMetric: View {
+    let value: String; let label: String; let icon: String; let color: Color
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 12, weight: .medium)).foregroundColor(color)
+            Text(value)
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .contentTransition(.numericText())
+                .animation(.spring(response: 0.4), value: value)
+            Text(label)
+                .font(.system(size: 10, design: .rounded)).foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 
 // MARK: - Supporting Views
 
-struct DestinationCard: View {
+struct DestinationRow: View {
     let destination: MockDestination
-    let primaryColor: Color
+    let teal: Color
 
     var body: some View {
         HStack(spacing: 14) {
             ZStack {
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(primaryColor.opacity(0.12))
-                    .frame(width: 44, height: 44)
+                    .fill(teal.opacity(0.12)).frame(width: 44, height: 44)
                 Image(systemName: destination.icon)
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundColor(primaryColor)
+                    .font(.system(size: 18, weight: .medium)).foregroundColor(teal)
             }
-
             VStack(alignment: .leading, spacing: 3) {
                 Text(destination.name)
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundColor(.primary)
                 Text(destination.subtitle)
-                    .font(.system(size: 13, design: .rounded))
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 13, design: .rounded)).foregroundColor(.secondary)
             }
-
             Spacer()
-
             Image(systemName: "chevron.right")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.secondary.opacity(0.6))
+                .font(.system(size: 12, weight: .semibold)).foregroundColor(.secondary.opacity(0.5))
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 16).padding(.vertical, 14)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.secondary.opacity(0.12), lineWidth: 0.5))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.secondary.opacity(0.1), lineWidth: 0.5))
     }
 }
 
 struct MetricCell: View {
-    let value: String
-    let label: String
-    let icon: String
-    let color: Color
-
+    let value: String; let label: String; let icon: String; let color: Color
     var body: some View {
         VStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(color)
-            Text(value)
-                .font(.system(size: 17, weight: .bold, design: .rounded))
-                .foregroundColor(.primary)
-            Text(label)
-                .font(.system(size: 11, design: .rounded))
-                .foregroundColor(.secondary)
+            Image(systemName: icon).font(.system(size: 13, weight: .medium)).foregroundColor(color)
+            Text(value).font(.system(size: 17, weight: .bold, design: .rounded))
+            Text(label).font(.system(size: 11, design: .rounded)).foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -604,26 +789,13 @@ struct MetricCell: View {
 }
 
 struct ExplanationRow: View {
-    let text: String
-    let color: Color
-
+    let text: String; let color: Color
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Circle()
-                .fill(color.opacity(0.7))
-                .frame(width: 6, height: 6)
-                .padding(.top, 5)
-
-            Text(text)
-                .font(.system(size: 14, weight: .regular, design: .rounded))
-                .foregroundColor(.primary)
-                .fixedSize(horizontal: false, vertical: true)
+            Circle().fill(color.opacity(0.7)).frame(width: 6, height: 6).padding(.top, 5)
+            Text(text).font(.system(size: 14, design: .rounded)).fixedSize(horizontal: false, vertical: true)
         }
     }
 }
 
-#Preview {
-    NavigationStack {
-        RouteView()
-    }
-}
+#Preview { NavigationStack { RouteView() } }

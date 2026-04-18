@@ -19,11 +19,9 @@ struct MockDestination: Identifiable, Hashable {
     let coordinate: CLLocationCoordinate2D
     let icon: String
 
-    // Hashable manual porque CLLocationCoordinate2D no conforma Hashable
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
     static func == (lhs: MockDestination, rhs: MockDestination) -> Bool { lhs.id == rhs.id }
 
-    // Destinos demo alrededor del campus Tec de Monterrey (25.6714, -100.3098)
     static let all: [MockDestination] = [
         MockDestination(
             name: "Biblioteca",
@@ -66,9 +64,9 @@ enum RouteMode: String, CaseIterable, Identifiable {
 
 struct RouteEvaluation {
     let route: MKRoute
-    let accessibilityScore: Int          // 0–100
-    let tilesNearby: [TileImpact]        // tiles que afectan esta ruta
-    let explanations: [String]           // frases human-readable del por qué
+    let accessibilityScore: Int
+    let tilesNearby: [TileImpact]
+    let explanations: [String]
 
     var accessibilityLabel: String {
         switch accessibilityScore {
@@ -87,46 +85,41 @@ struct RouteEvaluation {
     }
 
     var distanceText: String {
-        let meters = route.distance
-        if meters < 1000 {
-            return "\(Int(meters)) m"
-        } else {
-            return String(format: "%.1f km", meters / 1000)
-        }
+        let m = route.distance
+        return m < 1000 ? "\(Int(m)) m" : String(format: "%.1f km", m / 1000)
     }
 
     var timeText: String {
         let minutes = Int(route.expectedTravelTime / 60)
-        if minutes < 1 { return "< 1 min" }
-        return "\(minutes) min"
+        return minutes < 1 ? "< 1 min" : "\(minutes) min"
     }
 }
 
 struct TileImpact {
     let tile: AccessibilityTile
     let penalty: Int
-    let distanceToRoute: CLLocationDistance  // metros
+    let distanceToRoute: CLLocationDistance
 }
 
 // MARK: - Route Engine
 
 final class RouteEngine {
 
-    // Distancia máxima en metros para considerar que un tile "está cerca" de la ruta
+    /// Distancia máxima (metros) para considerar que un tile impacta la ruta
     static let proximityThreshold: CLLocationDistance = 60
 
-    // MARK: Evaluate a route against heatmap tiles
+    // MARK: Evaluate
 
+    /// Evalúa una ruta contra un array de tiles.
+    /// Llama con `HeatmapStore.shared.allTiles` para garantizar consistencia.
     static func evaluate(route: MKRoute, tiles: [AccessibilityTile]) -> RouteEvaluation {
         let routePoints = extractPoints(from: route.polyline)
-        var score = 100
+        var score  = 100
         var impacts: [TileImpact] = []
-        var explanationSet: [String] = []
 
         for tile in tiles {
             let dist = minDistance(from: tile.coordinate, toRoutePoints: routePoints)
             guard dist <= proximityThreshold else { continue }
-
             let penalty = penaltyFor(tile: tile)
             if penalty > 0 {
                 score -= penalty
@@ -136,98 +129,79 @@ final class RouteEngine {
 
         score = max(0, score)
 
-        // Generar explicaciones legibles
-        let notAccessibleCount = impacts.filter { $0.tile.accessibilityLevel == .notAccessible }.count
-        let limitedCount       = impacts.filter { $0.tile.accessibilityLevel == .limited }.count
-        let userScannedCount   = impacts.filter { $0.tile.isUserScanned }.count
+        // Generar frases explicativas
+        var explanations: [String] = []
+        let notAccessible = impacts.filter { $0.tile.accessibilityLevel == .notAccessible }.count
+        let limited       = impacts.filter { $0.tile.accessibilityLevel == .limited       }.count
+        let userScanned   = impacts.filter { $0.tile.isUserScanned                        }.count
 
-        if notAccessibleCount > 0 {
-            explanationSet.append("Cruza \(notAccessibleCount) zona\(notAccessibleCount > 1 ? "s" : "") no accesible\(notAccessibleCount > 1 ? "s" : "")")
+        if notAccessible > 0 {
+            explanations.append("Cruza \(notAccessible) zona\(notAccessible > 1 ? "s" : "") no accesible\(notAccessible > 1 ? "s" : "")")
         }
-        if limitedCount > 0 {
-            explanationSet.append("Pasa por \(limitedCount) tramo\(limitedCount > 1 ? "s" : "") con accesibilidad limitada")
+        if limited > 0 {
+            explanations.append("Pasa por \(limited) tramo\(limited > 1 ? "s" : "") con accesibilidad limitada")
         }
-        if userScannedCount > 0 {
-            explanationSet.append("Incluye \(userScannedCount) zona\(userScannedCount > 1 ? "s" : "") escaneada\(userScannedCount > 1 ? "s" : "") por usuarios")
+        if userScanned > 0 {
+            explanations.append("\(userScanned) zona\(userScanned > 1 ? "s" : "") escaneada\(userScanned > 1 ? "s" : "") en el trayecto")
         }
-
-        // Razones específicas de los tiles cercanos
-        let allReasons = impacts.flatMap { $0.tile.reasons }.filter { !$0.isEmpty }
-        let uniqueReasons = Array(Set(allReasons)).prefix(2)
-        explanationSet.append(contentsOf: uniqueReasons)
+        let uniqueReasons = Array(Set(impacts.flatMap { $0.tile.reasons }.filter { !$0.isEmpty })).prefix(2)
+        explanations.append(contentsOf: uniqueReasons)
 
         if impacts.isEmpty {
-            explanationSet.append("No se detectaron obstáculos en el trayecto")
-            explanationSet.append("Todas las zonas cercanas son accesibles")
+            explanations = [
+                "No se detectaron obstáculos en el trayecto",
+                "Todas las zonas cercanas son accesibles"
+            ]
         }
 
         return RouteEvaluation(
             route: route,
             accessibilityScore: score,
             tilesNearby: impacts,
-            explanations: Array(explanationSet.prefix(4))
+            explanations: Array(explanations.prefix(4))
         )
     }
 
-    // MARK: Penalty logic
+    // MARK: Penalty
 
     private static func penaltyFor(tile: AccessibilityTile) -> Int {
         var base: Int
         switch tile.accessibilityLevel {
         case .notAccessible: base = 25
         case .limited:       base = 10
-        case .accessible:    return 0   // tiles azules no penalizan
+        case .accessible:    return 0
         case .noData:        return 0
         }
-
-        // Tiles escaneados por el usuario tienen más peso (más confiables)
-        if tile.isUserScanned {
-            base = Int(Double(base) * 1.4)
-        }
-
-        // Reducir penalización si la confianza es baja
-        if tile.confidenceScore < 0.4 {
-            base = Int(Double(base) * 0.6)
-        }
-
+        if tile.isUserScanned  { base = Int(Double(base) * 1.4) }   // +40% si lo escaneó el usuario
+        if tile.confidenceScore < 0.4 { base = Int(Double(base) * 0.6) }  // -40% si confianza baja
         return base
     }
 
-    // MARK: Geometry helpers
+    // MARK: Geometry
 
-    /// Extrae los puntos de una polyline de MapKit como array de CLLocationCoordinate2D
     static func extractPoints(from polyline: MKPolyline) -> [CLLocationCoordinate2D] {
         var coords = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid, count: polyline.pointCount)
         polyline.getCoordinates(&coords, range: NSRange(location: 0, length: polyline.pointCount))
         return coords
     }
 
-    /// Distancia mínima de una coordenada a cualquier punto del array de puntos de ruta
     static func minDistance(
         from coord: CLLocationCoordinate2D,
         toRoutePoints points: [CLLocationCoordinate2D]
     ) -> CLLocationDistance {
         let loc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
-        var minDist = CLLocationDistance.greatestFiniteMagnitude
-        for point in points {
-            let d = loc.distance(from: CLLocation(latitude: point.latitude, longitude: point.longitude))
-            if d < minDist { minDist = d }
+        return points.reduce(CLLocationDistance.greatestFiniteMagnitude) { best, pt in
+            min(best, loc.distance(from: CLLocation(latitude: pt.latitude, longitude: pt.longitude)))
         }
-        return minDist
     }
 
-    // MARK: Pick best accessible route from alternatives
+    // MARK: Pick best accessible
 
-    /// Dado un array de evaluaciones, devuelve la de mayor score de accesibilidad.
-    /// Si ninguna supera la base en +10 puntos, devuelve la primera (más rápida).
     static func pickMostAccessible(from evaluations: [RouteEvaluation]) -> RouteEvaluation? {
         guard !evaluations.isEmpty else { return nil }
-        let best = evaluations.max { $0.accessibilityScore < $1.accessibilityScore }
-        let first = evaluations.first!
-        // Solo promover la "más accesible" si gana por margen significativo
-        if let best, best.accessibilityScore >= first.accessibilityScore + 10 {
-            return best
-        }
-        return first
+        guard let best = evaluations.max(by: { $0.accessibilityScore < $1.accessibilityScore }),
+              let first = evaluations.first else { return evaluations.first }
+        // Solo promover si gana por margen significativo
+        return best.accessibilityScore >= first.accessibilityScore + 10 ? best : first
     }
 }
