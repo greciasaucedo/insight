@@ -43,10 +43,14 @@ final class TileAPIService {
 
     // MARK: Save
 
-    func saveTile(_ tile: AccessibilityTile, isSimulated: Bool) async throws {
+    func saveTile(_ tile: AccessibilityTile, image: UIImage? = nil, isSimulated: Bool) async throws {
         guard SupabaseConfig.projectURL != "https://YOUR_PROJECT_ID.supabase.co",
               !SupabaseConfig.projectURL.isEmpty else { return }
-        let payload = TileSavePayload(tile: tile, isSimulated: isSimulated)
+        var imageURL: String? = nil
+        if let img = image {
+            imageURL = try? await uploadScanImage(img, tileId: tile.id)
+        }
+        let payload = TileSavePayload(tile: tile, isSimulated: isSimulated, scanImageURL: imageURL)
         var request = makeRequest(path: "/rest/v1/accessibility_tiles", method: "POST")
         request.httpBody = try JSONEncoder().encode(payload)
         let (_, response) = try await URLSession.shared.data(for: request)
@@ -54,6 +58,29 @@ final class TileAPIService {
             log.error("saveTile HTTP \(http.statusCode)")
             throw URLError(.badServerResponse)
         }
+    }
+
+    // MARK: Upload scan image
+
+    func uploadScanImage(_ image: UIImage, tileId: UUID) async throws -> String {
+        guard let userId = AuthService.shared.currentUser?.id,
+              let token  = AuthService.shared.accessToken else { return "" }
+        guard let jpeg = image.jpegData(compressionQuality: 0.75) else { return "" }
+        let path    = "\(userId)/\(tileId.uuidString).jpg"
+        let baseURL = SupabaseConfig.projectURL + "/storage/v1/object/scan-images/\(path)"
+        var req     = URLRequest(url: URL(string: baseURL)!)
+        req.httpMethod = "POST"
+        req.setValue("image/jpeg",           forHTTPHeaderField: "Content-Type")
+        req.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(token)",      forHTTPHeaderField: "Authorization")
+        req.setValue("true",                 forHTTPHeaderField: "x-upsert")
+        req.httpBody = jpeg
+        let (_, response) = try await URLSession.shared.data(for: req)
+        if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+            log.error("uploadScanImage HTTP \(http.statusCode)")
+            throw URLError(.badServerResponse)
+        }
+        return "\(SupabaseConfig.projectURL)/storage/v1/object/public/scan-images/\(path)"
     }
 
     // MARK: Fetch nearby tiles
@@ -136,8 +163,9 @@ private struct TileSavePayload: Encodable {
     let vibration_score: Double?
     let slope_score: Double?
     let passability_score: Double?
+    let scan_image_url: String?
 
-    init(tile: AccessibilityTile, isSimulated: Bool) {
+    init(tile: AccessibilityTile, isSimulated: Bool, scanImageURL: String? = nil) {
         latitude             = tile.coordinate.latitude
         longitude            = tile.coordinate.longitude
         accessibility_score  = tile.accessibilityScore
@@ -153,5 +181,6 @@ private struct TileSavePayload: Encodable {
         vibration_score      = tile.vibrationScore
         slope_score          = tile.slopeScore
         passability_score    = tile.passabilityScore
+        scan_image_url       = scanImageURL
     }
 }

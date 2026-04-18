@@ -124,9 +124,8 @@ final class SupabaseService {
         )
 
         do {
-            var request = makeRequest(path: "/rest/v1/user_profiles", method: "POST")
-            // upsert: overwrite if device_id already exists
-            request.setValue("resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
+            var request = makeRequest(path: "/rest/v1/user_profiles?on_conflict=user_id", method: "POST")
+            request.setValue("resolution=merge-duplicates,return=representation", forHTTPHeaderField: "Prefer")
             request.httpBody = try JSONEncoder().encode(payload)
             _ = try await URLSession.shared.data(for: request)
         } catch {

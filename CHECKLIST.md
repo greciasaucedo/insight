@@ -178,7 +178,21 @@ ALTER TABLE accessibility_tiles
   ADD COLUMN IF NOT EXISTS user_id uuid REFERENCES auth.users(id);
 ```
 
-## Task 4.8 — Console noise (simulator only) ℹ️ NOT A BUG
+## Task 4.9 — Profile card redesign ✅
+**File:** `InsightApp/ProfileView.swift`
+New header card (same size/material as before):
+- **Avatar circle (88 pt)**: shows photo from Supabase Storage (`AsyncImage`) or local `UIImage` after pick, falls back to `person.circle.fill` placeholder. Shows `ProgressView` overlay while uploading.
+- **Camera button** (bottom-right badge): `PhotosPicker` — selects from Photos library, compresses to JPEG 75%, uploads to `storage/avatars/{userId}/avatar.jpg` (upsert), updates `user_metadata.avatar_url`.
+- **Long-press context menu** on avatar: "Eliminar foto" → deletes from Storage + clears URL.
+- **Info rows**: `person.fill` + displayName, `phone.fill` + phone number, accessibility profile icon + profile name.
+
+## Task 4.10 — Supabase Storage bucket ⚠️ MANUAL SQL
+Run Query 3 from the session to create the `avatars` bucket with 5 MB limit, JPEG/PNG/WebP allow-list, and four RLS policies (public read, owner insert/update/delete).
+
+## Task 4.11 — Supabase RLS enabled ⚠️ MANUAL SQL
+Run Queries 1 & 2 to enable RLS on `user_profiles` and `accessibility_tiles` with per-user policies. Prevents cross-user data access.
+
+## Task 4.12 — Console noise (simulator only) ℹ️ NOT A BUG
 Lines beginning with `PerfPowerTelemetry`, `CAMetalLayer`, `default.csv`, `PPSClientDonation`,
 `RBSServiceErrorDomain`, `elapsedCPUTimeForFrontBoard` are **simulator sandbox restrictions** — they
 never appear on a physical device and require no code changes.

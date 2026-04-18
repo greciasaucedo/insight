@@ -229,12 +229,13 @@ extension ScanViewModel {
         )
 
         if let lastTile = HeatmapStore.shared.scannedTiles.last {
-            let demo = isDemo
+            let demo  = isDemo
+            let image = capturedImage  // capture before reset() clears it
             Task {
                 do {
-                    try await TileAPIService.shared.saveTile(lastTile, isSimulated: demo)
+                    try await TileAPIService.shared.saveTile(lastTile, image: image, isSimulated: demo)
                 } catch {
-                    // log only — fire-and-forget
+                    // fire-and-forget
                 }
             }
         }

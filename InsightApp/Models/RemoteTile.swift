@@ -37,6 +37,9 @@ struct RemoteTile: Decodable {
     /// Estimación combinada de transitabilidad. 0.0 (intransitable) – 1.0 (óptimo).
     let passability_score: Double?
 
+    /// URL pública de la foto tomada durante el escaneo (Supabase Storage, bucket scan-images).
+    let scan_image_url: String?
+
     // MARK: - Conversion
 
     func toAccessibilityTile() -> AccessibilityTile {

@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import PhotosUI
 
 struct ProfileView: View {
 
@@ -30,6 +31,10 @@ struct ProfileView: View {
     @State private var confirmPassword = ""
     @State private var pwdError: String?
     @State private var pwdLoading      = false
+    // Avatar
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var localAvatarImage: UIImage?
+    @State private var isUploadingAvatar = false
 
     var body: some View {
         NavigationStack {
@@ -53,29 +58,74 @@ struct ProfileView: View {
     }
 
     private var headerSection: some View {
-        VStack(spacing: 14) {
-            Image(systemName: profileService.currentProfile.icon)
-                .font(.system(size: 72))
-                .foregroundStyle(themeManager.primaryColor)
+        VStack(spacing: 20) {
 
-            VStack(spacing: 4) {
-                if let user = authService.currentUser {
-                    Text(user.displayName)
-                        .font(.system(size: 26, weight: .bold))
-                    Text(user.phone)
-                        .font(.system(size: 15))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text(profileService.currentProfile.displayName)
-                        .font(.system(size: 26, weight: .bold))
+            // ── Avatar + camera button ──────────────────────────────────────
+            ZStack(alignment: .bottomTrailing) {
+                Group {
+                    if let img = localAvatarImage {
+                        Image(uiImage: img)
+                            .resizable().scaledToFill()
+                    } else if let urlStr = authService.currentUser?.avatarURL,
+                              let url   = URL(string: urlStr) {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let img): img.resizable().scaledToFill()
+                            default:                avatarPlaceholder
+                            }
+                        }
+                    } else {
+                        avatarPlaceholder
+                    }
                 }
+                .frame(width: 88, height: 88)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(themeManager.primaryColor.opacity(0.35), lineWidth: 2))
+                .overlay {
+                    if isUploadingAvatar {
+                        Circle().fill(.black.opacity(0.35))
+                        ProgressView().tint(.white)
+                    }
+                }
+                .contextMenu {
+                    if localAvatarImage != nil || authService.currentUser?.avatarURL != nil {
+                        Button(role: .destructive) {
+                            localAvatarImage = nil
+                            Task { try? await AuthService.shared.removeAvatar() }
+                        } label: {
+                            Label("Eliminar foto", systemImage: "trash")
+                        }
+                    }
+                }
+
+                PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                    Image(systemName: "camera.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(7)
+                        .background(themeManager.primaryColor, in: Circle())
+                        .shadow(color: .black.opacity(0.2), radius: 3, x: 0, y: 1)
+                }
+                .disabled(isUploadingAvatar)
+            }
+            .onChange(of: selectedPhoto) { _, item in
+                Task { await handleAvatarSelection(item) }
             }
 
-            Text("Administra tu información, preferencias y accesibilidad en Insight.")
-                .font(.system(size: 15))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 12)
+            // ── Info rows ───────────────────────────────────────────────────
+            VStack(spacing: 10) {
+                if let user = authService.currentUser {
+                    profileInfoRow(
+                        icon: "person.fill",
+                        text: user.displayName.isEmpty ? "—" : user.displayName
+                    )
+                    profileInfoRow(icon: "phone.fill", text: user.phone.isEmpty ? "—" : user.phone)
+                }
+                profileInfoRow(
+                    icon: profileService.currentProfile.icon,
+                    text: profileService.currentProfile.displayName
+                )
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
@@ -88,6 +138,40 @@ struct ProfileView: View {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(Color.white.opacity(0.3), lineWidth: 1)
         )
+    }
+
+    private var avatarPlaceholder: some View {
+        Image(systemName: "person.circle.fill")
+            .resizable()
+            .foregroundStyle(themeManager.primaryColor.opacity(0.45))
+    }
+
+    private func profileInfoRow(icon: String, text: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(themeManager.primaryColor)
+                .frame(width: 20)
+            Text(text)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(.primary)
+            Spacer()
+        }
+    }
+
+    @MainActor
+    private func handleAvatarSelection(_ item: PhotosPickerItem?) async {
+        guard let item else { return }
+        guard let data   = try? await item.loadTransferable(type: Data.self),
+              let uiImg  = UIImage(data: data),
+              let jpeg   = uiImg.jpegData(compressionQuality: 0.75) else { return }
+        localAvatarImage   = uiImg
+        isUploadingAvatar  = true
+        do {
+            _ = try await AuthService.shared.uploadAvatar(jpeg)
+        } catch {
+            // keep local preview; upload will retry next session
+        }
+        isUploadingAvatar = false
     }
     
     private var colorAccessibilitySection: some View {

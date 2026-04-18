@@ -10,6 +10,7 @@ struct AuthUser: Codable {
     let firstName: String
     let lastName: String
     let phone: String
+    var avatarURL: String?
 
     var displayName: String { "\(firstName) \(lastName)" }
 }

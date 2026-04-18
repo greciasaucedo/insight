@@ -18,6 +18,7 @@ enum AuthError: LocalizedError {
     case userAlreadyExists
     case invalidCredentials
     case emailNotConfirmed
+    case rateLimitExceeded
     case notAuthenticated
     case networkError
     case invalidResponse
@@ -28,6 +29,7 @@ enum AuthError: LocalizedError {
         case .userAlreadyExists:  return "Este número ya tiene una cuenta. Inicia sesión."
         case .invalidCredentials: return "Teléfono o contraseña incorrectos."
         case .emailNotConfirmed:  return "Desactiva 'Confirm email' en Supabase Auth Settings."
+        case .rateLimitExceeded:  return "Demasiados intentos. Espera unos minutos e inténtalo de nuevo."
         case .notAuthenticated:   return "No hay sesión activa."
         case .networkError:       return "Error de red. Verifica tu conexión."
         case .invalidResponse:    return "Respuesta inesperada del servidor."
@@ -114,6 +116,63 @@ final class AuthService: ObservableObject {
         try parseSession(data, phoneFallback: user.phone)
     }
 
+    // MARK: Upload avatar (JPEG data → Supabase Storage → updates user_metadata)
+
+    @MainActor
+    func uploadAvatar(_ jpeg: Data) async throws -> String {
+        guard let userId = currentUser?.id,
+              let token  = accessToken else { throw AuthError.notAuthenticated }
+        let path    = "\(userId)/avatar.jpg"
+        let baseURL = SupabaseConfig.projectURL + "/storage/v1/object/avatars/\(path)"
+        var req     = URLRequest(url: URL(string: baseURL)!)
+        req.httpMethod = "POST"
+        req.setValue("image/jpeg",    forHTTPHeaderField: "Content-Type")
+        req.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("true",           forHTTPHeaderField: "x-upsert")
+        req.httpBody = jpeg
+        let (_, response) = try await URLSession.shared.data(for: req)
+        if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+            throw AuthError.serverError("Error al subir la foto.")
+        }
+        let publicURL = "\(SupabaseConfig.projectURL)/storage/v1/object/public/avatars/\(path)"
+        try await setAvatarURL(publicURL)
+        return publicURL
+    }
+
+    // MARK: Remove avatar
+
+    @MainActor
+    func removeAvatar() async throws {
+        guard let userId = currentUser?.id,
+              let token  = accessToken else { throw AuthError.notAuthenticated }
+        let path = "\(userId)/avatar.jpg"
+        var req  = URLRequest(url: URL(
+            string: SupabaseConfig.projectURL + "/storage/v1/object/avatars/\(path)")!
+        )
+        req.httpMethod = "DELETE"
+        req.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        _ = try? await URLSession.shared.data(for: req)
+        try await setAvatarURL(nil)
+    }
+
+    @MainActor
+    private func setAvatarURL(_ url: String?) async throws {
+        guard let token = accessToken, let user = currentUser else { throw AuthError.notAuthenticated }
+        var meta: [String: Any] = [
+            "first_name": user.firstName,
+            "last_name":  user.lastName,
+            "phone":      user.phone,
+            "avatar_url": url ?? NSNull()
+        ]
+        let data = try await authRequest(
+            path: "/auth/v1/user", method: "PUT",
+            body: ["data": meta], token: token
+        )
+        try parseSession(data, phoneFallback: user.phone)
+    }
+
     // MARK: Session persistence
 
     func clearSession() {
@@ -149,9 +208,10 @@ final class AuthService: ObservableObject {
         // Map GoTrue error codes → typed errors
         if let code = json["error_code"] as? String {
             switch code {
-            case "user_already_exists":  throw AuthError.userAlreadyExists
-            case "invalid_credentials":  throw AuthError.invalidCredentials
-            case "email_not_confirmed":  throw AuthError.emailNotConfirmed
+            case "user_already_exists":        throw AuthError.userAlreadyExists
+            case "invalid_credentials":        throw AuthError.invalidCredentials
+            case "email_not_confirmed":        throw AuthError.emailNotConfirmed
+            case "over_email_send_rate_limit": throw AuthError.rateLimitExceeded
             default:
                 let msg = json["msg"] as? String ?? json["message"] as? String ?? code
                 throw AuthError.serverError(msg)
@@ -174,7 +234,8 @@ final class AuthService: ObservableObject {
             id:        userId,
             firstName: meta["first_name"] as? String ?? "",
             lastName:  meta["last_name"]  as? String ?? "",
-            phone:     meta["phone"]      as? String ?? phoneFallback
+            phone:     meta["phone"]      as? String ?? phoneFallback,
+            avatarURL: meta["avatar_url"] as? String
         )
         accessToken  = token
         refreshToken = refresh
