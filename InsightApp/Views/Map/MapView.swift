@@ -460,7 +460,10 @@ struct MapView: View {
             Task { @MainActor in vm.processNewScans(store.scannedTiles) }
         }
         .fullScreenCover(isPresented: $showScan)    { ScanView().environmentObject(themeManager) }
-        .fullScreenCover(isPresented: $showRoute)   { NavigationStack { RouteView().environmentObject(themeManager) } }
+        .sheet(isPresented: $showRoute) {
+            RouteView()
+                .environmentObject(themeManager)
+        }
         .fullScreenCover(isPresented: $showProfile) { ProfileView().environmentObject(themeManager) }
     }
 

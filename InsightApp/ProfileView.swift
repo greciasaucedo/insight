@@ -12,24 +12,9 @@ struct ProfileView: View {
     @EnvironmentObject var themeManager: ThemeManager
     @AppStorage("didFinishOnboarding") private var didFinishOnboarding = false
     @ObservedObject private var profileService = ProfileService.shared
-    @ObservedObject private var authService    = AuthService.shared
     @Environment(\.openURL) private var openURL
-    @State private var highContrast = true
-    @State private var voiceGuidance = false
-    @State private var hapticFeedback = true
-    @State private var selectedColorMode: ColorAccessibilityMode = .defaultMode
-    // Edit info sheet
-    @State private var showEditInfo    = false
-    @State private var editFirstName   = ""
-    @State private var editLastName    = ""
-    @State private var editError: String?
-    @State private var editLoading     = false
-    // Change password sheet
-    @State private var showChangePwd   = false
-    @State private var newPassword     = ""
-    @State private var confirmPassword = ""
-    @State private var pwdError: String?
-    @State private var pwdLoading      = false
+    @Environment(\.dismiss) private var dismiss
+
 
     var body: some View {
         NavigationStack {
@@ -37,10 +22,8 @@ struct ProfileView: View {
                 VStack(spacing: 20) {
                     headerSection
                     accessibilitySection
-                    preferencesSection
-                    permissionsSection
-                    accountSection
                     colorAccessibilitySection
+                    accountSection
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
@@ -49,6 +32,17 @@ struct ProfileView: View {
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Perfil")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: {
+                        dismiss()
+                    }) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(themeManager.primaryColor)
+                    }
+                }
+            }
         }
     }
 
@@ -59,16 +53,12 @@ struct ProfileView: View {
                 .foregroundStyle(themeManager.primaryColor)
 
             VStack(spacing: 4) {
-                if let user = authService.currentUser {
-                    Text(user.displayName)
-                        .font(.system(size: 26, weight: .bold))
-                    Text(user.phone)
-                        .font(.system(size: 15))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text(profileService.currentProfile.displayName)
-                        .font(.system(size: 26, weight: .bold))
-                }
+                Text("Perfil activo")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                Text(profileService.currentProfile.displayName)
+                    .font(.system(size: 26, weight: .bold))
             }
 
             Text("Administra tu información, preferencias y accesibilidad en Insight.")
@@ -89,7 +79,7 @@ struct ProfileView: View {
                 .stroke(Color.white.opacity(0.3), lineWidth: 1)
         )
     }
-    
+
     private var colorAccessibilitySection: some View {
         profileCard(title: "Accesibilidad visual", icon: "paintpalette.fill") {
             VStack(alignment: .leading, spacing: 16) {
@@ -99,7 +89,7 @@ struct ProfileView: View {
 
                 ForEach(ColorAccessibilityMode.allCases, id: \.self) { mode in
                     Button(action: {
-                        selectedColorMode = mode
+                        themeManager.selectedMode = mode
                     }) {
                         HStack(spacing: 12) {
                             HStack(spacing: 6) {
@@ -128,8 +118,8 @@ struct ProfileView: View {
 
                             Spacer()
 
-                            Image(systemName: selectedColorMode == mode ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(selectedColorMode == mode ? themeManager.primaryColor : .secondary.opacity(0.4))
+                            Image(systemName: themeManager.selectedMode == mode ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(themeManager.selectedMode == mode ? themeManager.primaryColor : .secondary.opacity(0.4))
                                 .font(.system(size: 20))
                         }
                         .padding(.vertical, 6)
@@ -170,167 +160,21 @@ struct ProfileView: View {
         }
     }
 
-    private var preferencesSection: some View {
-        profileCard(title: "Preferencias", icon: "slider.horizontal.3") {
-            VStack(spacing: 16) {
-                ToggleRow(title: "Alto contraste", icon: "circle.lefthalf.filled", isOn: $highContrast, tint: themeManager.primaryColor)
-                ToggleRow(title: "Indicaciones por voz", icon: "speaker.wave.2.fill", isOn: $voiceGuidance, tint: themeManager.primaryColor)
-                ToggleRow(title: "Vibración", icon: "iphone.radiowaves.left.and.right", isOn: $hapticFeedback, tint: themeManager.primaryColor)
-            }
-        }
-    }
-
-    private var permissionsSection: some View {
-        profileCard(title: "Permisos", icon: "lock.shield") {
-            VStack(spacing: 14) {
-                PermissionStatusRow(title: "Ubicación", icon: "location.fill", status: "Activado", statusColor: .green)
-                PermissionStatusRow(title: "Cámara", icon: "camera.fill", status: "Activado", statusColor: .green)
-                PermissionStatusRow(title: "Movimiento", icon: "figure.walk.motion", status: "Activado", statusColor: .green)
-
-                Button(action: {
-                    if let url = URL(string: "app-settings:") {
-                        openURL(url)
-                    }
-                }) {
-                    Text("Abrir configuración")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(themeManager.primaryColor)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-
     private var accountSection: some View {
         profileCard(title: "Cuenta", icon: "person.text.rectangle") {
-            VStack(spacing: 14) {
-                Button(action: {
-                    editFirstName = authService.currentUser?.firstName ?? ""
-                    editLastName  = authService.currentUser?.lastName  ?? ""
-                    editError     = nil
-                    showEditInfo  = true
-                }) {
-                    accountRow(title: "Editar información", icon: "pencil")
+            Button(action: {
+                PersistenceService.shared.clearAll()
+                didFinishOnboarding = false
+            }) {
+                HStack(spacing: 10) {
+                    Image(systemName: "rectangle.portrait.and.arrow.right")
+                        .foregroundStyle(.red)
+                    Text("Cerrar sesión")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.red)
+                    Spacer()
                 }
-
-                Button(action: {
-                    newPassword     = ""
-                    confirmPassword = ""
-                    pwdError        = nil
-                    showChangePwd   = true
-                }) {
-                    accountRow(title: "Cambiar contraseña", icon: "key.fill")
-                }
-
-                Button(action: {
-                    Task {
-                        await AuthService.shared.signOut()
-                        PersistenceService.shared.clearAll()
-                        didFinishOnboarding = false
-                    }
-                }) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "rectangle.portrait.and.arrow.right")
-                            .foregroundStyle(.red)
-                        Text("Cerrar sesión")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.red)
-                        Spacer()
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-        }
-        // Edit info sheet
-        .sheet(isPresented: $showEditInfo) {
-            NavigationStack {
-                Form {
-                    Section("Nombre") {
-                        TextField("Nombre", text: $editFirstName)
-                        TextField("Apellido", text: $editLastName)
-                    }
-                    if let err = editError {
-                        Section { Text(err).foregroundStyle(.red).font(.system(size: 13)) }
-                    }
-                }
-                .navigationTitle("Editar información")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancelar") { showEditInfo = false }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        if editLoading {
-                            ProgressView()
-                        } else {
-                            Button("Guardar") {
-                                guard !editFirstName.trimmingCharacters(in: .whitespaces).isEmpty,
-                                      !editLastName.trimmingCharacters(in: .whitespaces).isEmpty
-                                else { editError = "Los campos no pueden estar vacíos."; return }
-                                editLoading = true
-                                Task {
-                                    do {
-                                        try await AuthService.shared.updateInfo(
-                                            firstName: editFirstName.trimmingCharacters(in: .whitespaces),
-                                            lastName:  editLastName.trimmingCharacters(in: .whitespaces)
-                                        )
-                                        showEditInfo = false
-                                    } catch {
-                                        editError = error.localizedDescription
-                                    }
-                                    editLoading = false
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // Change password sheet
-        .sheet(isPresented: $showChangePwd) {
-            NavigationStack {
-                Form {
-                    Section("Nueva contraseña") {
-                        SecureField("Mínimo 8 caracteres", text: $newPassword)
-                        SecureField("Confirmar contraseña", text: $confirmPassword)
-                    }
-                    if let err = pwdError {
-                        Section { Text(err).foregroundStyle(.red).font(.system(size: 13)) }
-                    }
-                }
-                .navigationTitle("Cambiar contraseña")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancelar") { showChangePwd = false }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        if pwdLoading {
-                            ProgressView()
-                        } else {
-                            Button("Guardar") {
-                                guard newPassword.count >= 8 else {
-                                    pwdError = "La contraseña debe tener al menos 8 caracteres."
-                                    return
-                                }
-                                guard newPassword == confirmPassword else {
-                                    pwdError = "Las contraseñas no coinciden."
-                                    return
-                                }
-                                pwdLoading = true
-                                Task {
-                                    do {
-                                        try await AuthService.shared.changePassword(newPassword: newPassword)
-                                        showChangePwd = false
-                                    } catch {
-                                        pwdError = error.localizedDescription
-                                    }
-                                    pwdLoading = false
-                                }
-                            }
-                        }
-                    }
-                }
+                .padding(.vertical, 4)
             }
         }
     }
@@ -357,21 +201,6 @@ struct ProfileView: View {
                 .stroke(Color.white.opacity(0.25), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 4)
-    }
-
-    private func accountRow(title: String, icon: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .foregroundStyle(themeManager.primaryColor)
-            Text(title)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(.primary)
-            Spacer()
-            Image(systemName: "chevron.right")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 4)
     }
 }
 
