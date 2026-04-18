@@ -251,25 +251,12 @@ struct RouteView: View {
 
                 Spacer()
 
-                // Profile badge + tile count
-                HStack(spacing: 12) {
-                    HStack(spacing: 5) {
-                        Image(systemName: vm.activeProfile.icon)
-                            .font(.system(size: 11))
-                            .foregroundColor(teal)
-                        Text(vm.activeProfile.displayName)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundColor(teal)
-                    }
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(teal.opacity(0.12), in: Capsule())
-
-                    HStack(spacing: 6) {
-                        Circle().fill(teal).frame(width: 7, height: 7)
-                        Text("\(store.allTiles.count) zonas en el mapa")
-                            .font(.system(size: 12, design: .rounded))
-                            .foregroundColor(.secondary)
-                    }
+                // Hint de tiles cargados
+                HStack(spacing: 6) {
+                    Circle().fill(teal).frame(width: 7, height: 7)
+                    Text("\(store.allTiles.count) zonas en el mapa")
+                        .font(.system(size: 12, design: .rounded))
+                        .foregroundColor(.secondary)
                 }
                 .padding(.bottom, 36)
             }
@@ -580,14 +567,16 @@ struct ActiveRouteView: View {
                 Color.black.ignoresSafeArea()
             }
 
-            // Glass panel inferior
+            // Glass panel inferior — altura fija, deslizable
             VStack(spacing: 0) {
                 // Handle
                 Capsule()
                     .fill(Color.secondary.opacity(0.3))
                     .frame(width: 36, height: 5)
-                    .padding(.top, 10).padding(.bottom, 18)
+                    .padding(.top, 10).padding(.bottom, 14)
 
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 0) {
                 // Destino + modo
                 HStack(spacing: 12) {
                     ZStack {
@@ -628,7 +617,7 @@ struct ActiveRouteView: View {
                     }
                 }
                 .frame(height: 4)
-                .padding(.horizontal, 20).padding(.vertical, 16)
+                .padding(.horizontal, 20).padding(.vertical, 14)
 
                 // Métricas en tiempo real
                 HStack(spacing: 0) {
@@ -655,7 +644,7 @@ struct ActiveRouteView: View {
                 }
                 .padding(.horizontal, 16)
 
-                Divider().padding(.horizontal, 20).padding(.top, 16)
+                Divider().padding(.horizontal, 20).padding(.top, 14)
 
                 // Zonas evitadas / info de accesibilidad
                 HStack(spacing: 10) {
@@ -703,14 +692,19 @@ struct ActiveRouteView: View {
                 .padding(.horizontal, 20).padding(.top, 18)
                 .accessibilityLabel("Parar la ruta activa")
 
-                Spacer(minLength: 36)
+                Spacer(minLength: 20)
+                    } // VStack inner
+                } // ScrollView
+                .padding(.bottom, 8)
             }
+            .frame(maxWidth: .infinity)
+            .frame(maxHeight: UIScreen.main.bounds.height * 0.48)
             .background(
                 RoundedRectangle(cornerRadius: 28)
                     .fill(.regularMaterial)
                     .shadow(color: .black.opacity(0.14), radius: 24, x: 0, y: -6)
             )
-            .ignoresSafeArea(edges: .bottom)
+            .padding(.bottom, 0)
         }
         .onAppear {
             pulseScale = 1.3

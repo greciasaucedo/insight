@@ -5,22 +5,83 @@
 
 
 
-
 import SwiftUI
 import MapKit
 import CoreHaptics
 import CoreLocation
 import Combine
 
-// MARK: - Models
+// MARK: - TileSourceType
+
+/// Origen real de la observación. Permite al mapa distinguir
+/// entre datos visuales, de movimiento, fusionados y confirmados por el usuario.
+enum TileSourceType: String, Codable, CaseIterable {
+    case camera           = "camera"           // clasificación de CoreML sobre frame de cámara
+    case motion           = "motion"           // acelerómetro / giroscopio (vibración + slope)
+    case fused            = "fused"            // camera + motion en la misma sesión
+    case userConfirmation = "userConfirmation" // el usuario confirmó con thumbs-up/down
+    case mock             = "mock"             // dato generado para demo / tests
+    case remote           = "remote"           // descargado desde Supabase sin más metadatos
+
+    var displayName: String {
+        switch self {
+        case .camera:           return "Cámara"
+        case .motion:           return "Movimiento"
+        case .fused:            return "Cámara + Movimiento"
+        case .userConfirmation: return "Confirmado"
+        case .mock:             return "Demo"
+        case .remote:           return "Remoto"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .camera:           return "camera.fill"
+        case .motion:           return "waveform.path.ecg"
+        case .fused:            return "sensor.tag.radiowaves.forward.fill"
+        case .userConfirmation: return "hand.thumbsup.fill"
+        case .mock:             return "wand.and.stars"
+        case .remote:           return "icloud.and.arrow.down"
+        }
+    }
+}
+
+// MARK: - AccessibilityTile
 
 struct AccessibilityTile: Identifiable {
-    let id = UUID()
+    let id: UUID
+
+    // Localización
     var coordinate: CLLocationCoordinate2D
-    var accessibilityScore: Int
-    var confidenceScore: Double
+
+    // Puntuaciones principales
+    var accessibilityScore: Int      // 0-100: puntuación de accesibilidad global
+    var confidenceScore: Double      // 0.0-1.0: certeza del modelo / fuente
+
+    // Puntuaciones granulares  ← NUEVAS
+    var vibrationScore: Double?      // 0.0-1.0: qué tan suave fue la superficie (acelerómetro)
+    var slopeScore: Double?          // 0.0-1.0: qué tan plana está la superficie (giroscopio)
+    var passabilityScore: Double?    // 0.0-1.0: estimación combinada de "se puede pasar"
+
+    // Procedencia  ← NUEVAS / EXPANDIDAS
+    var sourceType: TileSourceType   // origen real del dato
+    var detectedLabel: String?       // etiqueta exacta que devolvió CoreML (e.g. "ramp", "stairs")
+    var profileUsed: String?         // perfil de accesibilidad activo durante el scan
+
+    // Metadata temporal  ← NUEVAS
+    var createdAt: Date              // cuándo se capturó este dato
+    var recencyWeight: Double {      // 0.0-1.0: qué tan "fresco" es el dato
+        // Decae linealmente de 1.0 a 0.0 en 30 días
+        let ageSeconds = Date().timeIntervalSince(createdAt)
+        let thirtyDays: Double = 30 * 24 * 3600
+        return max(0, 1.0 - (ageSeconds / thirtyDays))
+    }
+
+    // Flags heredados
     var reasons: [String]
-    var isUserScanned: Bool = false
+    var isUserScanned: Bool
+
+    // MARK: Computed
 
     var accessibilityLevel: AccessibilityLevel {
         switch accessibilityScore {
@@ -37,6 +98,44 @@ struct AccessibilityTile: Identifiable {
         case 0.33...0.65: return "Medio"
         default:          return "Bajo"
         }
+    }
+
+    /// Puntuación efectiva = score × recencyWeight × confidenceScore
+    /// Útil para ordenar tiles al construir rutas.
+    var effectiveScore: Double {
+        Double(accessibilityScore) * recencyWeight * confidenceScore
+    }
+
+    // MARK: Initializer con defaults para compatibilidad hacia atrás
+
+    init(
+        id: UUID = UUID(),
+        coordinate: CLLocationCoordinate2D,
+        accessibilityScore: Int,
+        confidenceScore: Double,
+        reasons: [String],
+        isUserScanned: Bool = false,
+        vibrationScore: Double? = nil,
+        slopeScore: Double? = nil,
+        passabilityScore: Double? = nil,
+        sourceType: TileSourceType = .mock,
+        detectedLabel: String? = nil,
+        profileUsed: String? = nil,
+        createdAt: Date = Date()
+    ) {
+        self.id                = id
+        self.coordinate        = coordinate
+        self.accessibilityScore = accessibilityScore
+        self.confidenceScore   = confidenceScore
+        self.reasons           = reasons
+        self.isUserScanned     = isUserScanned
+        self.vibrationScore    = vibrationScore
+        self.slopeScore        = slopeScore
+        self.passabilityScore  = passabilityScore
+        self.sourceType        = sourceType
+        self.detectedLabel     = detectedLabel
+        self.profileUsed       = profileUsed
+        self.createdAt         = createdAt
     }
 }
 
@@ -129,21 +228,22 @@ class HeatmapStore: ObservableObject {
 
     private func loadBaseTiles() {
         let origin = CLLocationCoordinate2D(latitude: 25.6714, longitude: -100.3098)
-        let configs: [(Double, Double, Int, Double, [String])] = [
-            ( 0.000,  0.000, 85, 0.90, []),
-            ( 0.001,  0.001, 78, 0.80, []),
-            ( 0.002, -0.001, 55, 0.60, ["Inclinación detectada"]),
-            ( 0.001, -0.002, 45, 0.50, ["Desvíos frecuentes"]),
-            (-0.001,  0.002, 30, 0.70, ["Vibración elevada", "Desvíos frecuentes"]),
-            (-0.002, -0.001, 20, 0.40, ["Vibración elevada", "Inclinación detectada"]),
-            ( 0.003,  0.002, 90, 0.95, []),
-            (-0.001, -0.003, 60, 0.65, ["Inclinación detectada"]),
-            ( 0.002,  0.003, 35, 0.30, ["Vibración elevada"]),
-            (-0.003,  0.001, 72, 0.80, []),
-            ( 0.000, -0.003, 10, 0.90, ["Vibración elevada", "Desvíos frecuentes", "Inclinación detectada"]),
-            ( 0.004, -0.001, 80, 0.85, []),
+        // (dlat, dlon, score, conf, reasons, vibration, slope, passability, label)
+        let configs: [(Double, Double, Int, Double, [String], Double?, Double?, Double?, String)] = [
+            ( 0.000,  0.000, 85, 0.90, [],                                              0.9, 0.95, 0.90, "flat"),
+            ( 0.001,  0.001, 78, 0.80, [],                                              0.8, 0.85, 0.82, "flat"),
+            ( 0.002, -0.001, 55, 0.60, ["Inclinación detectada"],                       0.6, 0.45, 0.55, "ramp"),
+            ( 0.001, -0.002, 45, 0.50, ["Desvíos frecuentes"],                         0.5, 0.50, 0.48, "ramp"),
+            (-0.001,  0.002, 30, 0.70, ["Vibración elevada", "Desvíos frecuentes"],    0.2, 0.60, 0.30, "obstacle"),
+            (-0.002, -0.001, 20, 0.40, ["Vibración elevada", "Inclinación detectada"], 0.1, 0.30, 0.20, "stairs"),
+            ( 0.003,  0.002, 90, 0.95, [],                                              0.95, 0.97, 0.93, "flat"),
+            (-0.001, -0.003, 60, 0.65, ["Inclinación detectada"],                       0.65, 0.55, 0.60, "ramp"),
+            ( 0.002,  0.003, 35, 0.30, ["Vibración elevada"],                           0.25, 0.70, 0.35, "obstacle"),
+            (-0.003,  0.001, 72, 0.80, [],                                              0.80, 0.88, 0.78, "flat"),
+            ( 0.000, -0.003, 10, 0.90, ["Vibración elevada", "Desvíos frecuentes", "Inclinación detectada"], 0.05, 0.20, 0.10, "stairs"),
+            ( 0.004, -0.001, 80, 0.85, [],                                              0.85, 0.90, 0.83, "flat"),
         ]
-        baseTiles = configs.map { dlat, dlon, score, conf, reasons in
+        baseTiles = configs.map { dlat, dlon, score, conf, reasons, vib, slope, pass, label in
             AccessibilityTile(
                 coordinate: CLLocationCoordinate2D(
                     latitude: origin.latitude + dlat,
@@ -152,20 +252,48 @@ class HeatmapStore: ObservableObject {
                 accessibilityScore: score,
                 confidenceScore: conf,
                 reasons: reasons,
-                isUserScanned: false
+                isUserScanned: false,
+                vibrationScore: vib,
+                slopeScore: slope,
+                passabilityScore: pass,
+                sourceType: .mock,
+                detectedLabel: label,
+                profileUsed: nil,
+                createdAt: Date()
             )
         }
     }
 
-    func addTile(coordinate: CLLocationCoordinate2D, score: Int, confidence: Double, reasons: [String]) {
-        scannedTiles.append(AccessibilityTile(
+    /// Agrega un tile escaneado por el usuario.
+    /// Acepta los nuevos campos granulares opcionales.
+    func addTile(
+        coordinate: CLLocationCoordinate2D,
+        score: Int,
+        confidence: Double,
+        reasons: [String],
+        vibrationScore: Double? = nil,
+        slopeScore: Double? = nil,
+        passabilityScore: Double? = nil,
+        sourceType: TileSourceType = .camera,
+        detectedLabel: String? = nil,
+        profileUsed: String? = nil
+    ) {
+        let tile = AccessibilityTile(
             coordinate: coordinate,
             accessibilityScore: score,
             confidenceScore: confidence,
             reasons: reasons,
-            isUserScanned: true
-        ))
-        // Persistencia (Item 12): guardar inmediatamente al disco
+            isUserScanned: true,
+            vibrationScore: vibrationScore,
+            slopeScore: slopeScore,
+            passabilityScore: passabilityScore,
+            sourceType: sourceType,
+            detectedLabel: detectedLabel,
+            profileUsed: profileUsed,
+            createdAt: Date()
+        )
+        scannedTiles.append(tile)
+        // Persistencia: guardar inmediatamente al disco
         PersistenceService.shared.saveScannedTiles(scannedTiles)
     }
 }
@@ -515,6 +643,9 @@ struct HeatmapTileView: View {
     let tileRadius: CGFloat = 72
     var tileColor: Color { tile.accessibilityLevel.color }
 
+    /// La opacidad base se reduce para datos viejos (recencyWeight < 0.3 = más de 21 días)
+    var baseOpacity: Double { max(0.18, tile.recencyWeight * 0.42) }
+
     var body: some View {
         if tile.accessibilityLevel != .noData {
             ZStack {
@@ -532,8 +663,8 @@ struct HeatmapTileView: View {
                 Ellipse()
                     .fill(RadialGradient(
                         gradient: Gradient(colors: [
-                            tileColor.opacity(animated ? 0.42 : 0),
-                            tileColor.opacity(animated ? 0.18 : 0),
+                            tileColor.opacity(animated ? baseOpacity : 0),
+                            tileColor.opacity(animated ? baseOpacity * 0.45 : 0),
                             tileColor.opacity(0)
                         ]),
                         center: .center, startRadius: 0, endRadius: tileRadius
@@ -582,6 +713,14 @@ struct BottomSheetView: View {
     @Binding var userFeedback: [UUID: Bool]
     let primaryColor: Color
 
+    private let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.timeStyle = .short
+        f.locale = Locale(identifier: "es_MX")
+        return f
+    }()
+
     var statusIcon: String {
         switch tile.accessibilityLevel {
         case .accessible:    return "checkmark.circle.fill"
@@ -620,7 +759,6 @@ struct BottomSheetView: View {
                             .font(.system(size: 20, weight: .bold, design: .rounded))
                         if tile.isUserScanned {
                             let isSimulated = tile.reasons.first?.contains("(simulado)") ?? false
-                            // Badge "Escaneado" (cámara real) o "Demo" (clasificación simulada)
                             Label(isSimulated ? "Demo" : "Escaneado",
                                   systemImage: isSimulated ? "wand.and.stars" : "camera.fill")
                                 .font(.system(size: 11, weight: .semibold, design: .rounded))
@@ -641,6 +779,45 @@ struct BottomSheetView: View {
                 + Text(" / 100").font(.system(size: 13, design: .rounded)).foregroundColor(.secondary)
             }
             .padding(.horizontal, 20)
+
+            // ── Fuente y timestamp ──────────────────────────────────────────
+            HStack(spacing: 12) {
+                Label(tile.sourceType.displayName, systemImage: tile.sourceType.icon)
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundColor(.secondary)
+                Spacer()
+                // Recency badge
+                let rw = tile.recencyWeight
+                let recencyColor: Color = rw > 0.7 ? .green : (rw > 0.3 ? .orange : .red)
+                Label(dateFormatter.string(from: tile.createdAt), systemImage: "clock")
+                    .font(.system(size: 11, design: .rounded))
+                    .foregroundColor(recencyColor)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+
+            // ── Puntuaciones granulares ─────────────────────────────────────
+            if tile.vibrationScore != nil || tile.slopeScore != nil || tile.passabilityScore != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Detalles de superficie")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundColor(.secondary)
+                        .padding(.top, 16)
+
+                    HStack(spacing: 12) {
+                        if let v = tile.vibrationScore {
+                            MiniScoreChip(label: "Vibración", value: v, icon: "waveform.path", color: statusColor)
+                        }
+                        if let s = tile.slopeScore {
+                            MiniScoreChip(label: "Pendiente", value: s, icon: "angle", color: statusColor)
+                        }
+                        if let p = tile.passabilityScore {
+                            MiniScoreChip(label: "Transitabilidad", value: p, icon: "figure.walk", color: statusColor)
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
 
             if tile.isUserScanned, let mainReason = tile.reasons.first {
                 VStack(alignment: .leading, spacing: 6) {
@@ -686,6 +863,17 @@ struct BottomSheetView: View {
                 }
             }
 
+            // Perfil usado
+            if let profile = tile.profileUsed {
+                HStack(spacing: 6) {
+                    Image(systemName: "person.fill").font(.system(size: 11)).foregroundColor(.secondary)
+                    Text("Perfil: \(profile)")
+                        .font(.system(size: 12, design: .rounded)).foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+            }
+
             Divider().padding(.vertical, 18).padding(.horizontal, 20)
 
             if let feedback = userFeedback[tile.id] {
@@ -716,6 +904,35 @@ struct BottomSheetView: View {
         .frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial)
             .shadow(color: .black.opacity(0.12), radius: 20, x: 0, y: -4))
+    }
+}
+
+// MARK: - MiniScoreChip (nuevo)
+
+/// Chip compacto para mostrar vibrationScore, slopeScore, passabilityScore en el BottomSheet.
+struct MiniScoreChip: View {
+    let label: String
+    let value: Double   // 0.0 - 1.0
+    let icon: String
+    let color: Color
+
+    var pct: Int { Int(value * 100) }
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 12)).foregroundColor(color)
+            Text("\(pct)%")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundColor(color)
+            Text(label)
+                .font(.system(size: 9, design: .rounded))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 

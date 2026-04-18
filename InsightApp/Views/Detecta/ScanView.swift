@@ -5,7 +5,6 @@
 //  Created by Guillermo Lira on 18/04/26.
 //
 
-
 import SwiftUI
 import UIKit
 import AVFoundation
@@ -70,7 +69,6 @@ struct ScanResult {
         }
     }
 
-    // FIX 4: reasons con contexto de fuente (real vs demo) — se asigna desde el ViewModel
     var reasons: [String] {
         switch label.lowercased() {
         case "obstacle": return ["Obstáculo detectado por cámara"]
@@ -91,10 +89,6 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
     @Published var isAnalyzing = false
     @Published var errorMessage: String? = nil
     @Published var showSuccess = false
-
-    // FIX 3 (ViewModel): Flag explícito para saber si se está usando el modo demo.
-    // Se expone a la UI para mostrar el badge "Modo demo" en la prediction card,
-    // protegiendo el demo si CoreML no carga en el dispositivo del jurado.
     @Published var isUsingDemo = false
 
     private let locationManager = CLLocationManager()
@@ -119,8 +113,6 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
             return
         }
 
-        // FIX 3: Se setea isUsingDemo ANTES de bifurcar, para que la UI
-        // pueda reflejar el modo en cuanto empieza el análisis.
         if let model = try? AccessibilitySurfaceClassifier_1(configuration: MLModelConfiguration()),
            let visionModel = try? VNCoreMLModel(for: model.model) {
             isUsingDemo = false
@@ -188,42 +180,7 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
 
     func useScan() {
         guard let result = scanResult else { return }
-
-        // FIX 4: Si estamos en modo demo, agregar "(simulado)" a la razón
-        // para que el jurado vea transparencia en el BottomSheet del mapa.
-        let reasons: [String]
-        if isUsingDemo {
-            reasons = result.reasons.map { $0 + " (simulado)" }
-        } else {
-            reasons = result.reasons
-        }
-
-        HeatmapStore.shared.addTile(
-            coordinate: result.coordinate,
-            score: result.accessibilityScore,
-            confidence: Double(result.confidence),
-            reasons: reasons
-        )
-
-        // Background upload — failure is logged, never blocks UX
-        if let lastTile = HeatmapStore.shared.scannedTiles.last {
-            let demo = isUsingDemo
-            Task {
-                do {
-                    try await TileAPIService.shared.saveTile(lastTile, isSimulated: demo)
-                } catch {
-                    // log only
-                }
-            }
-        }
-
-        withAnimation {
-            showSuccess = true
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
-            self.reset()
-        }
+        saveToMap(result: result, isDemo: isUsingDemo)
     }
 
     func reset() {
@@ -239,6 +196,56 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
         currentLocation = location.coordinate
+    }
+}
+
+// MARK: - Save to Map Extension
+
+extension ScanViewModel {
+
+    /// Guarda el resultado del scan en HeatmapStore y sube en background a Supabase.
+    func saveToMap(result: ScanResult, isDemo: Bool) {
+        let reasons: [String]
+        if isDemo {
+            reasons = result.reasons.map { $0 + " (simulado)" }
+        } else {
+            reasons = result.reasons
+        }
+
+        let srcType: TileSourceType = isDemo ? .mock : .camera
+        let profile = ProfileService.shared.currentProfile.rawValue
+
+        HeatmapStore.shared.addTile(
+            coordinate:       result.coordinate,
+            score:            result.accessibilityScore,
+            confidence:       Double(result.confidence),
+            reasons:          reasons,
+            vibrationScore:   nil,
+            slopeScore:       nil,
+            passabilityScore: nil,
+            sourceType:       srcType,
+            detectedLabel:    result.label,
+            profileUsed:      profile
+        )
+
+        if let lastTile = HeatmapStore.shared.scannedTiles.last {
+            let demo = isDemo
+            Task {
+                do {
+                    try await TileAPIService.shared.saveTile(lastTile, isSimulated: demo)
+                } catch {
+                    // log only — fire-and-forget
+                }
+            }
+        }
+
+        withAnimation {
+            showSuccess = true
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+            self.reset()
+        }
     }
 }
 
@@ -394,7 +401,6 @@ struct ScanView: View {
                     .font(.system(size: 26, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
 
-                // Score de accesibilidad
                 HStack(spacing: 6) {
                     Image(systemName: "chart.bar.fill")
                         .font(.system(size: 11))
@@ -406,7 +412,6 @@ struct ScanView: View {
                 .padding(.vertical, 5)
                 .background(result.accessibilityLevel.color.opacity(0.15), in: Capsule())
 
-                // Confianza del modelo
                 HStack(spacing: 6) {
                     Image(systemName: "brain")
                         .font(.system(size: 11))
@@ -418,8 +423,6 @@ struct ScanView: View {
                 .padding(.vertical, 5)
                 .background(.white.opacity(0.08), in: Capsule())
 
-                // FIX 3: Badge "Modo demo" — visible solo cuando CoreML no está disponible
-                // Permite hacer el demo sin depender del modelo compilado
                 if vm.isUsingDemo {
                     HStack(spacing: 5) {
                         Image(systemName: "wand.and.stars")
@@ -440,12 +443,11 @@ struct ScanView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
 
-                // FIX 4: Razón principal visible directamente en la prediction card
                 if let reason = result.reasons.first {
                     HStack(spacing: 6) {
                         Image(systemName: "info.circle")
                             .font(.system(size: 12))
-                        Text(reason)
+                        Text(vm.isUsingDemo ? "\(reason) (simulado)" : reason)
                             .font(.system(size: 13, weight: .medium, design: .rounded))
                     }
                     .foregroundColor(.white.opacity(0.5))
@@ -576,8 +578,6 @@ struct ScanView: View {
     }
 
     // MARK: - Success Overlay
-    // FIX visual: El overlay ahora muestra el tipo detectado y el score
-    // para que el "feedback de confirmación" sea informativo, no solo decorativo.
 
     var successOverlay: some View {
         ZStack {
@@ -678,61 +678,76 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
     private func setupShutterButton() {
         captureButton = UIButton(type: .custom)
         captureButton.translatesAutoresizingMaskIntoConstraints = false
-        captureButton.layer.cornerRadius = 36
-        captureButton.layer.borderWidth = 3
-        captureButton.layer.borderColor = UIColor(
-            red: 136 / 255,
-            green: 205 / 255,
-            blue: 212 / 255,
-            alpha: 1
-        ).cgColor
         captureButton.backgroundColor = .clear
 
+        // Aro exterior
+        captureButton.layer.cornerRadius = 38
+        captureButton.layer.borderWidth = 2.5
+        captureButton.layer.borderColor = UIColor.white.withAlphaComponent(0.85).cgColor
+        captureButton.layer.shadowColor = UIColor.black.cgColor
+        captureButton.layer.shadowOpacity = 0.22
+        captureButton.layer.shadowRadius = 10
+        captureButton.layer.shadowOffset = CGSize(width: 0, height: 4)
+
+        // Círculo interior
         let inner = UIView()
         inner.translatesAutoresizingMaskIntoConstraints = false
+        inner.isUserInteractionEnabled = false
         inner.backgroundColor = UIColor(
             red: 136 / 255,
             green: 205 / 255,
             blue: 212 / 255,
-            alpha: 0.9
+            alpha: 0.95
         )
-        inner.layer.cornerRadius = 28
-        inner.isUserInteractionEnabled = false
+        inner.layer.cornerRadius = 29
+        inner.layer.borderWidth = 1
+        inner.layer.borderColor = UIColor.white.withAlphaComponent(0.35).cgColor
+        inner.clipsToBounds = true
+
+        // Highlight superior para efecto glass
+        let highlight = CAGradientLayer()
+        highlight.colors = [
+            UIColor.white.withAlphaComponent(0.45).cgColor,
+            UIColor.clear.cgColor
+        ]
+        highlight.startPoint = CGPoint(x: 0.5, y: 0.0)
+        highlight.endPoint = CGPoint(x: 0.5, y: 1.0)
+        highlight.frame = CGRect(x: 0, y: 0, width: 58, height: 30)
+        highlight.cornerRadius = 29
+        inner.layer.addSublayer(highlight)
+
         captureButton.addSubview(inner)
-
-        NSLayoutConstraint.activate([
-            inner.centerXAnchor.constraint(equalTo: captureButton.centerXAnchor),
-            inner.centerYAnchor.constraint(equalTo: captureButton.centerYAnchor),
-            inner.widthAnchor.constraint(equalToConstant: 56),
-            inner.heightAnchor.constraint(equalToConstant: 56)
-        ])
-
-        captureButton.addTarget(self, action: #selector(capture), for: .touchUpInside)
-        captureButton.accessibilityLabel = "Tomar foto"
-
         view.addSubview(captureButton)
 
         NSLayoutConstraint.activate([
             captureButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             captureButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -32),
-            captureButton.widthAnchor.constraint(equalToConstant: 72),
-            captureButton.heightAnchor.constraint(equalToConstant: 72)
-        ])
-    }
+            captureButton.widthAnchor.constraint(equalToConstant: 76),
+            captureButton.heightAnchor.constraint(equalToConstant: 76),
 
+            inner.centerXAnchor.constraint(equalTo: captureButton.centerXAnchor),
+            inner.centerYAnchor.constraint(equalTo: captureButton.centerYAnchor),
+            inner.widthAnchor.constraint(equalToConstant: 58),
+            inner.heightAnchor.constraint(equalToConstant: 58)
+        ])
+
+        captureButton.addTarget(self, action: #selector(capture), for: .touchUpInside)
+        captureButton.accessibilityLabel = "Tomar foto"
+    }
     @objc private func capture() {
-        UIView.animate(withDuration: 0.1, animations: {
-            self.captureButton.transform = CGAffineTransform(scaleX: 0.88, y: 0.88)
+        UIView.animate(withDuration: 0.12, animations: {
+            self.captureButton.transform = CGAffineTransform(scaleX: 0.92, y: 0.92)
+            self.captureButton.alpha = 0.9
         }) { _ in
-            UIView.animate(withDuration: 0.1) {
+            UIView.animate(withDuration: 0.16) {
                 self.captureButton.transform = .identity
+                self.captureButton.alpha = 1.0
             }
         }
 
         let settings = AVCapturePhotoSettings()
         output.capturePhoto(with: settings, delegate: self)
     }
-
     func photoOutput(
         _ output: AVCapturePhotoOutput,
         didFinishProcessingPhoto photo: AVCapturePhoto,
@@ -751,27 +766,95 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
 }
 
 // MARK: - Decorative Capture Button
-
 struct CaptureButton: View {
     let color: Color
-    @State private var pressed = false
+    @GestureState private var isPressed = false
 
     var body: some View {
         ZStack {
+            // Halo exterior sutil
             Circle()
-                .stroke(color.opacity(0.7), lineWidth: 3)
-                .frame(width: 72, height: 72)
+                .fill(
+                    RadialGradient(
+                        gradient: Gradient(colors: [
+                            color.opacity(0.18),
+                            color.opacity(0.08),
+                            .clear
+                        ]),
+                        center: .center,
+                        startRadius: 8,
+                        endRadius: 42
+                    )
+                )
+                .frame(width: 92, height: 92)
+                .blur(radius: 2)
 
+            // Aro exterior
             Circle()
-                .fill(color.opacity(0.9))
-                .frame(width: 56, height: 56)
-                .scaleEffect(pressed ? 0.88 : 1)
-                .animation(.spring(response: 0.2), value: pressed)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            .white.opacity(0.85),
+                            color.opacity(0.95),
+                            .white.opacity(0.35)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 3
+                )
+                .frame(width: 74, height: 74)
+                .shadow(color: color.opacity(0.25), radius: 10, x: 0, y: 4)
+
+            // Círculo interior
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            .white.opacity(0.95),
+                            color.opacity(0.92),
+                            color.opacity(0.78)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .frame(width: 58, height: 58)
+                .overlay(
+                    Circle()
+                        .stroke(.white.opacity(0.35), lineWidth: 1)
+                )
+                .overlay(
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    .white.opacity(0.45),
+                                    .clear
+                                ],
+                                startPoint: .top,
+                                endPoint: .center
+                            )
+                        )
+                        .padding(6)
+                )
+                .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 5)
+                .scaleEffect(isPressed ? 0.88 : 1)
+
+            // Reflejo pequeño tipo glass
+            Circle()
+                .fill(.white.opacity(0.22))
+                .frame(width: 18, height: 18)
+                .offset(x: -14, y: -14)
+                .blur(radius: 0.5)
+                .opacity(isPressed ? 0.7 : 1)
         }
+        .frame(width: 92, height: 92)
+        .scaleEffect(isPressed ? 0.96 : 1)
+        .animation(.spring(response: 0.22, dampingFraction: 0.72), value: isPressed)
         .accessibilityHidden(true)
     }
 }
-
 #Preview {
     ScanView()
 }
