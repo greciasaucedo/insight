@@ -43,9 +43,10 @@ final class TileAPIService {
 
     // MARK: Save
 
-    func saveTile(_ tile: AccessibilityTile, image: UIImage? = nil, isSimulated: Bool) async throws {
+    @discardableResult
+    func saveTile(_ tile: AccessibilityTile, image: UIImage? = nil, isSimulated: Bool) async throws -> String? {
         guard SupabaseConfig.projectURL != "https://YOUR_PROJECT_ID.supabase.co",
-              !SupabaseConfig.projectURL.isEmpty else { return }
+              !SupabaseConfig.projectURL.isEmpty else { return nil }
         var imageURL: String? = nil
         if let img = image {
             imageURL = try? await uploadScanImage(img, tileId: tile.id)
@@ -58,6 +59,7 @@ final class TileAPIService {
             log.error("saveTile HTTP \(http.statusCode)")
             throw URLError(.badServerResponse)
         }
+        return imageURL
     }
 
     // MARK: Upload scan image

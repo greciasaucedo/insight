@@ -299,11 +299,14 @@ extension ScanViewModel {
                 profileUsed:      ProfileService.shared.currentProfile.rawValue
             )
 
-            // 8. Upload en background
+            // 8. Upload en background; update local tile with returned image URL
             if let lastTile = HeatmapStore.shared.scannedTiles.last {
-                let image = capturedImage
+                let image  = capturedImage
+                let tileId = lastTile.id
                 Task {
-                    try? await TileAPIService.shared.saveTile(lastTile, image: image, isSimulated: isDemo)
+                    if let url = try? await TileAPIService.shared.saveTile(lastTile, image: image, isSimulated: isDemo) {
+                        await MainActor.run { HeatmapStore.shared.updateTileScanImageURL(id: tileId, url: url) }
+                    }
                 }
             }
 

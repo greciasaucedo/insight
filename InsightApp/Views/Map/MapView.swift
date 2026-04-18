@@ -65,6 +65,7 @@ struct AccessibilityTile: Identifiable {
 
     var reasons: [String]
     var isUserScanned: Bool
+    var scanImageURL: String?
 
     var accessibilityLevel: AccessibilityLevel {
         switch accessibilityScore {
@@ -100,7 +101,8 @@ struct AccessibilityTile: Identifiable {
         sourceType: TileSourceType = .mock,
         detectedLabel: String? = nil,
         profileUsed: String? = nil,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        scanImageURL: String? = nil
     ) {
         self.id                 = id
         self.coordinate         = coordinate
@@ -115,6 +117,7 @@ struct AccessibilityTile: Identifiable {
         self.detectedLabel      = detectedLabel
         self.profileUsed        = profileUsed
         self.createdAt          = createdAt
+        self.scanImageURL       = scanImageURL
     }
 }
 
@@ -239,7 +242,8 @@ class HeatmapStore: ObservableObject {
         passabilityScore: Double? = nil,
         sourceType: TileSourceType = .camera,
         detectedLabel: String? = nil,
-        profileUsed: String? = nil
+        profileUsed: String? = nil,
+        scanImageURL: String? = nil
     ) {
         let tile = AccessibilityTile(
             coordinate: coordinate,
@@ -253,11 +257,18 @@ class HeatmapStore: ObservableObject {
             sourceType: sourceType,
             detectedLabel: detectedLabel,
             profileUsed: profileUsed,
-            createdAt: Date()
+            createdAt: Date(),
+            scanImageURL: scanImageURL
         )
 
         scannedTiles.append(tile)
         PersistenceService.shared.saveScannedTiles(scannedTiles)
+    }
+
+    func updateTileScanImageURL(id: UUID, url: String) {
+        if let idx = scannedTiles.firstIndex(where: { $0.id == id }) {
+            scannedTiles[idx].scanImageURL = url
+        }
     }
 
     func updateTile(id: UUID, newScore: ScoringOutput) {
@@ -621,11 +632,26 @@ struct MapView: View {
             Button {
                 showProfile = true
             } label: {
-                Image(systemName: "person.circle.fill")
-                    .font(.system(size: 34))
-                    .foregroundStyle(themeManager.primaryColor)
-                    .background(Circle().fill(.regularMaterial))
-                    .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 2)
+                Group {
+                    if let urlStr = AuthService.shared.currentUser?.avatarURL,
+                       let url = URL(string: urlStr) {
+                        AsyncImage(url: url) { phase in
+                            if case .success(let img) = phase {
+                                img.resizable().scaledToFill()
+                                    .frame(width: 40, height: 40).clipShape(Circle())
+                            } else {
+                                Image(systemName: "person.circle.fill")
+                                    .font(.system(size: 34)).foregroundStyle(themeManager.primaryColor)
+                            }
+                        }
+                        .frame(width: 40, height: 40)
+                    } else {
+                        Image(systemName: "person.circle.fill")
+                            .font(.system(size: 34)).foregroundStyle(themeManager.primaryColor)
+                    }
+                }
+                .background(Circle().fill(.regularMaterial))
+                .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 2)
             }
         }
         .padding(.horizontal, 16)
@@ -1009,6 +1035,20 @@ struct BottomSheetView: View {
             }
             .padding(.horizontal, 20)
             .padding(.top, 8)
+
+            if let urlStr = tile.scanImageURL, let url = URL(string: urlStr) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().scaledToFill()
+                            .frame(maxWidth: .infinity).frame(height: 160)
+                            .clipped().cornerRadius(12)
+                            .padding(.horizontal, 20).padding(.top, 12)
+                    default:
+                        EmptyView()
+                    }
+                }
+            }
 
             if tile.vibrationScore != nil || tile.slopeScore != nil || tile.passabilityScore != nil {
                 VStack(alignment: .leading, spacing: 8) {

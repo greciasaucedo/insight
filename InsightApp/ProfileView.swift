@@ -34,6 +34,9 @@ struct ProfileView: View {
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var localAvatarImage: UIImage?
     @State private var isUploadingAvatar = false
+    @State private var showImageSourcePicker = false
+    @State private var showCamera = false
+    @State private var showLibrary = false
 
     var body: some View {
         NavigationStack {
@@ -107,7 +110,7 @@ struct ProfileView: View {
                     }
                 }
 
-            PhotosPicker(selection: $selectedPhoto, matching: .images) {
+            Button { showImageSourcePicker = true } label: {
                 Image(systemName: "camera.fill")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.white)
@@ -117,6 +120,19 @@ struct ProfileView: View {
             }
             .disabled(isUploadingAvatar)
         }
+        .confirmationDialog("Foto de perfil", isPresented: $showImageSourcePicker) {
+            Button("Tomar foto") { showCamera = true }
+            Button("Elegir de biblioteca") { showLibrary = true }
+            Button("Cancelar", role: .cancel) {}
+        }
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraPickerView(image: $localAvatarImage)
+                .ignoresSafeArea()
+                .onDisappear {
+                    if localAvatarImage != nil { Task { await uploadLocalAvatar() } }
+                }
+        }
+        .photosPicker(isPresented: $showLibrary, selection: $selectedPhoto, matching: .images)
         .onChange(of: selectedPhoto) { _, item in
             Task { await handleAvatarSelection(item) }
         }
@@ -199,9 +215,15 @@ struct ProfileView: View {
     private func handleAvatarSelection(_ item: PhotosPickerItem?) async {
         guard let item else { return }
         guard let data  = try? await item.loadTransferable(type: Data.self),
-              let uiImg = UIImage(data: data),
+              let uiImg = UIImage(data: data) else { return }
+        localAvatarImage = uiImg
+        await uploadLocalAvatar()
+    }
+
+    @MainActor
+    private func uploadLocalAvatar() async {
+        guard let uiImg = localAvatarImage,
               let jpeg  = uiImg.jpegData(compressionQuality: 0.75) else { return }
-        localAvatarImage  = uiImg
         isUploadingAvatar = true
         do { _ = try await AuthService.shared.uploadAvatar(jpeg) } catch {}
         isUploadingAvatar = false
@@ -583,6 +605,39 @@ enum ColorAccessibilityMode: String, CaseIterable {
         case .protanopia:   return [.cyan, .yellow, .gray]
         case .tritanopia:   return [.purple, .orange, .gray]
         case .highContrast: return [.black, .white, .yellow]
+        }
+    }
+}
+
+// MARK: - Camera Picker
+
+struct CameraPickerView: UIViewControllerRepresentable {
+    @Binding var image: UIImage?
+    @Environment(\.dismiss) private var dismiss
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ vc: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: CameraPickerView
+        init(_ parent: CameraPickerView) { self.parent = parent }
+
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            parent.image = info[.originalImage] as? UIImage
+            parent.dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
         }
     }
 }

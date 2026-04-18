@@ -58,7 +58,8 @@ struct RemoteTile: Decodable {
             sourceType:        srcType,
             detectedLabel:     label,
             profileUsed:       profile_used,
-            createdAt:         date
+            createdAt:         date,
+            scanImageURL:      scan_image_url
         )
     }
 
