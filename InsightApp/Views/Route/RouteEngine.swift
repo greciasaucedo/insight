@@ -5,7 +5,6 @@
 //  Created by Guillermo Lira on 18/04/26.
 //
 
-
 import Foundation
 import MapKit
 import CoreLocation
@@ -118,43 +117,80 @@ final class RouteEngine {
         profile: AccessibilityProfile = ProfileService.shared.currentProfile
     ) -> RouteEvaluation {
         let routePoints = extractPoints(from: route.polyline)
-        var score  = 100
+        var score = 100
         var impacts: [TileImpact] = []
 
         for tile in tiles {
             let dist = minDistance(from: tile.coordinate, toRoutePoints: routePoints)
             guard dist <= proximityThreshold else { continue }
-            let penalty = penaltyFor(tile: tile, profile: profile)
+
+            let observations = HeatmapStore.shared.observations(near: tile.coordinate)
+            let merged = TileConfidenceService.merge(observations: observations)
+
+            let mergedTile = AccessibilityTile(
+                coordinate:         tile.coordinate,
+                accessibilityScore: merged.accessibilityScore,
+                confidenceScore:    merged.confidenceScore,
+                reasons:            merged.reasons,
+                isUserScanned:      tile.isUserScanned,
+                passabilityScore:   merged.passabilityScore,
+                sourceType:         merged.dominantSourceType,
+                detectedLabel:      tile.detectedLabel,
+                profileUsed:        tile.profileUsed,
+                createdAt:          tile.createdAt
+            )
+
+            let penalty = penaltyFor(tile: mergedTile, profile: profile)
+
             if penalty > 0 {
                 score -= penalty
-                impacts.append(TileImpact(tile: tile, penalty: penalty, distanceToRoute: dist))
+                impacts.append(
+                    TileImpact(
+                        tile: mergedTile,
+                        penalty: penalty,
+                        distanceToRoute: dist
+                    )
+                )
             }
         }
 
         score = max(0, score)
 
-        // Generar frases explicativas
         var explanations: [String] = []
         let notAccessible = impacts.filter { $0.tile.accessibilityLevel == .notAccessible }.count
-        let limited       = impacts.filter { $0.tile.accessibilityLevel == .limited       }.count
-        let userScanned   = impacts.filter { $0.tile.isUserScanned                        }.count
+        let limited = impacts.filter { $0.tile.accessibilityLevel == .limited }.count
+        let userScanned = impacts.filter { $0.tile.isUserScanned }.count
 
-        // Mensaje personalizado por perfil
         let profileImpactedLabel = impacts.first?.tile.reasons.first
-        if let msg = AccessibilityScoringService.explanationMessage(for: profileImpactedLabel, profile: profile) {
+        if let msg = AccessibilityScoringService.explanationMessage(
+            for: profileImpactedLabel,
+            profile: profile
+        ) {
             explanations.append(msg)
         }
 
         if notAccessible > 0 {
-            explanations.append("Cruza \(notAccessible) zona\(notAccessible > 1 ? "s" : "") no accesible\(notAccessible > 1 ? "s" : "")")
+            explanations.append(
+                "Cruza \(notAccessible) zona\(notAccessible > 1 ? "s" : "") no accesible\(notAccessible > 1 ? "s" : "")"
+            )
         }
+
         if limited > 0 {
-            explanations.append("Pasa por \(limited) tramo\(limited > 1 ? "s" : "") con accesibilidad limitada")
+            explanations.append(
+                "Pasa por \(limited) tramo\(limited > 1 ? "s" : "") con accesibilidad limitada"
+            )
         }
+
         if userScanned > 0 {
-            explanations.append("\(userScanned) zona\(userScanned > 1 ? "s" : "") escaneada\(userScanned > 1 ? "s" : "") en el trayecto")
+            explanations.append(
+                "\(userScanned) zona\(userScanned > 1 ? "s" : "") escaneada\(userScanned > 1 ? "s" : "") en el trayecto"
+            )
         }
-        let uniqueReasons = Array(Set(impacts.flatMap { $0.tile.reasons }.filter { !$0.isEmpty })).prefix(2)
+
+        let uniqueReasons = Array(
+            Set(impacts.flatMap { $0.tile.reasons }.filter { !$0.isEmpty })
+        ).prefix(2)
+
         explanations.append(contentsOf: uniqueReasons)
 
         if impacts.isEmpty {
@@ -181,7 +217,10 @@ final class RouteEngine {
     // MARK: Geometry
 
     static func extractPoints(from polyline: MKPolyline) -> [CLLocationCoordinate2D] {
-        var coords = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid, count: polyline.pointCount)
+        var coords = [CLLocationCoordinate2D](
+            repeating: kCLLocationCoordinate2DInvalid,
+            count: polyline.pointCount
+        )
         polyline.getCoordinates(&coords, range: NSRange(location: 0, length: polyline.pointCount))
         return coords
     }
@@ -191,6 +230,7 @@ final class RouteEngine {
         toRoutePoints points: [CLLocationCoordinate2D]
     ) -> CLLocationDistance {
         let loc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+
         return points.reduce(CLLocationDistance.greatestFiniteMagnitude) { best, pt in
             min(best, loc.distance(from: CLLocation(latitude: pt.latitude, longitude: pt.longitude)))
         }
@@ -201,8 +241,10 @@ final class RouteEngine {
     static func pickMostAccessible(from evaluations: [RouteEvaluation]) -> RouteEvaluation? {
         guard !evaluations.isEmpty else { return nil }
         guard let best = evaluations.max(by: { $0.accessibilityScore < $1.accessibilityScore }),
-              let first = evaluations.first else { return evaluations.first }
-        // Solo promover si gana por margen significativo
+              let first = evaluations.first else {
+            return evaluations.first
+        }
+
         return best.accessibilityScore >= first.accessibilityScore + 10 ? best : first
     }
 }

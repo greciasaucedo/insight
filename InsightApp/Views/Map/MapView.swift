@@ -183,7 +183,8 @@ class HeatmapStore: ObservableObject {
             if !newTiles.isEmpty {
                 baseTiles.append(contentsOf: newTiles)
             }
-        } catch {}
+        } catch {
+        }
     }
 
     private func loadBaseTiles() {
@@ -202,6 +203,7 @@ class HeatmapStore: ObservableObject {
             ( 0.000, -0.003, 10, 0.90, ["Vibración elevada", "Desvíos frecuentes", "Inclinación detectada"], 0.05, 0.20, 0.10, "stairs"),
             ( 0.004, -0.001, 80, 0.85, [],                                              0.85, 0.90, 0.83, "flat"),
         ]
+
         baseTiles = configs.map { dlat, dlon, score, conf, reasons, vib, slope, pass, label in
             AccessibilityTile(
                 coordinate: CLLocationCoordinate2D(
@@ -252,8 +254,50 @@ class HeatmapStore: ObservableObject {
         scannedTiles.append(tile)
         PersistenceService.shared.saveScannedTiles(scannedTiles)
     }
-}
 
+    func updateTile(id: UUID, newScore: ScoringOutput) {
+        if let index = scannedTiles.firstIndex(where: { $0.id == id }) {
+            scannedTiles[index].accessibilityScore = newScore.accessibilityScore
+            scannedTiles[index].confidenceScore = newScore.confidenceScore
+            scannedTiles[index].passabilityScore = newScore.passabilityScore
+            scannedTiles[index].reasons = newScore.reasons
+            scannedTiles[index].sourceType = newScore.effectiveSourceType
+
+            PersistenceService.shared.saveScannedTiles(scannedTiles)
+        }
+
+        if let index = baseTiles.firstIndex(where: { $0.id == id }) {
+            baseTiles[index].accessibilityScore = newScore.accessibilityScore
+            baseTiles[index].confidenceScore = newScore.confidenceScore
+            baseTiles[index].passabilityScore = newScore.passabilityScore
+            baseTiles[index].reasons = newScore.reasons
+            baseTiles[index].sourceType = .userConfirmation
+        }
+    }
+    func updateScannedTile(id: UUID, applying validation: UserValidation) {
+        guard let idx = scannedTiles.firstIndex(where: { $0.id == id }) else { return }
+        let old = scannedTiles[idx]
+        let newScore = validation.isPositive
+            ? max(old.accessibilityScore, 70)
+            : min(old.accessibilityScore, 35)
+        scannedTiles[idx] = AccessibilityTile(
+            id:                 old.id,
+            coordinate:         old.coordinate,
+            accessibilityScore: newScore,
+            confidenceScore:    min(1.0, old.confidenceScore + 0.15),
+            reasons:            old.reasons + [validation.passExperience.label],
+            isUserScanned:      true,
+            vibrationScore:     old.vibrationScore,
+            slopeScore:         old.slopeScore,
+            passabilityScore:   validation.derivedPassabilityScore,
+            sourceType:         .userConfirmation,
+            detectedLabel:      old.detectedLabel,
+            profileUsed:        old.profileUsed,
+            createdAt:          old.createdAt
+        )
+        PersistenceService.shared.saveScannedTiles(scannedTiles)
+    }
+}
 // MARK: - Map ViewModel
 
 @MainActor
@@ -439,7 +483,10 @@ struct MapView: View {
             Task { @MainActor in vm.processNewScans(store.scannedTiles) }
         }
         .fullScreenCover(isPresented: $showScan)    { ScanView().environmentObject(themeManager) }
-        .fullScreenCover(isPresented: $showRoute)   { NavigationStack { RouteView().environmentObject(themeManager) } }
+        .sheet(isPresented: $showRoute) {
+            RouteView()
+                .environmentObject(themeManager)
+        }
         .fullScreenCover(isPresented: $showProfile) { ProfileView().environmentObject(themeManager) }
     }
 
@@ -843,12 +890,52 @@ struct BottomSheetView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("¿Pasaste bien aquí?")
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
+
                     HStack(spacing: 12) {
                         FeedbackButton(label: "Sí", icon: "hand.thumbsup", color: primaryColor) {
-                            withAnimation { userFeedback[tile.id] = true }
+                            let input = ScoringInput(
+                                detectedLabel:    tile.detectedLabel,
+                                visualConfidence: tile.confidenceScore,
+                                vibrationScore:   tile.vibrationScore,
+                                slopeScore:       tile.slopeScore,
+                                motionConfidence: nil,
+                                profile:          ProfileService.shared.currentProfile,
+                                existingTile:     tile,
+                                userConfirmation: true
+                            )
+
+                            let rescored = LayerScoringEngine.score(input)
+
+                            HeatmapStore.shared.updateTile(id: tile.id, newScore: rescored)
+
+                            withAnimation {
+                                userFeedback[tile.id] = true
+                            }
                         }
-                        FeedbackButton(label: "No", icon: "hand.thumbsdown", color: Color(red: 1, green: 0.42, blue: 0.42)) {
-                            withAnimation { userFeedback[tile.id] = false }
+
+                        FeedbackButton(
+                            label: "No",
+                            icon: "hand.thumbsdown",
+                            color: Color(red: 1, green: 0.42, blue: 0.42)
+                        ) {
+                            let input = ScoringInput(
+                                detectedLabel:    tile.detectedLabel,
+                                visualConfidence: tile.confidenceScore,
+                                vibrationScore:   tile.vibrationScore,
+                                slopeScore:       tile.slopeScore,
+                                motionConfidence: nil,
+                                profile:          ProfileService.shared.currentProfile,
+                                existingTile:     tile,
+                                userConfirmation: false
+                            )
+
+                            let rescored = LayerScoringEngine.score(input)
+
+                            HeatmapStore.shared.updateTile(id: tile.id, newScore: rescored)
+
+                            withAnimation {
+                                userFeedback[tile.id] = false
+                            }
                         }
                     }
                 }

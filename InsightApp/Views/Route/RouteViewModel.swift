@@ -5,7 +5,6 @@
 //  Created by Guillermo Lira on 18/04/26.
 //
 
-
 import SwiftUI
 import MapKit
 import CoreLocation
@@ -27,13 +26,13 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
         center: CLLocationCoordinate2D(latitude: 25.6714, longitude: -100.3098),
         span: MKCoordinateSpan(latitudeDelta: 0.012, longitudeDelta: 0.012)
     )
-
-    // PASO 2: Bandera que indica que una reevaluación acaba de ocurrir,
-    // usada por la UI para mostrar el banner "Ruta actualizada".
     @Published var routeJustUpdated = false
-
-    // PASO 3: Estado de ruta activa
     @Published var isRouteActive = false
+
+    // Search
+    @Published var searchText: String = ""
+    @Published var searchResults: [MKMapItem] = []
+    @Published var isSearching: Bool = false
 
     // MARK: - Computed
 
@@ -49,11 +48,7 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
 
     private(set) var originCoordinate = CLLocationCoordinate2D(latitude: 25.6714, longitude: -100.3098)
     private let locationManager = CLLocationManager()
-
-    // Guardamos las rutas "crudas" de MapKit para poder reevaluar sin volver a fetch
     private var cachedMKRoutes: [MKRoute] = []
-
-    // PASO 2: Cancellable del sink que escucha HeatmapStore
     private var tileObserver: AnyCancellable?
     private var profileObserver: AnyCancellable?
     private var lastKnownTileCount = 0
@@ -69,12 +64,36 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
         subscribeToProfileChanges()
     }
 
-    // MARK: - PASO 2: Suscripción reactiva a HeatmapStore
-    //
-    // Cada vez que cambia allTiles (ya sea por scan nuevo o por carga inicial),
-    // si ya tenemos rutas cacheadas, reevaluamos contra los tiles actuales.
-    // Esto es lo que produce el "wow moment": el usuario escanea una zona,
-    // y el score de la ruta baja en tiempo real sin tocar nada.
+    // MARK: - Search
+
+    func searchDestination(query: String) {
+        guard !query.isEmpty else { searchResults = []; return }
+        isSearching = true
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = query
+        request.region = mapRegion
+        MKLocalSearch(request: request).start { [weak self] response, _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.searchResults = response?.mapItems ?? []
+                self.isSearching = false
+            }
+        }
+    }
+
+    func selectMapItem(_ item: MKMapItem) {
+        let dest = MockDestination(
+            name: item.name ?? "Destino",
+            subtitle: item.placemark.title ?? "",
+            coordinate: item.placemark.coordinate,
+            icon: "mappin.circle.fill"
+        )
+        searchResults = []
+        searchText = ""
+        select(destination: dest)
+    }
+
+    // MARK: - Reactive subscriptions
 
     private func subscribeToProfileChanges() {
         profileObserver = ProfileService.shared.$currentProfile
@@ -89,7 +108,7 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
 
     private func subscribeToTileChanges() {
         tileObserver = HeatmapStore.shared.$scannedTiles
-            .dropFirst()                          // ignorar el valor inicial
+            .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newScanned in
                 guard let self else { return }
@@ -117,7 +136,6 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
             accessibleEvaluation = evaluations.first
         }
 
-        // Solo disparar el banner si el score cambió perceptiblemente (±3 puntos)
         let fastChanged       = abs((fastestEvaluation?.accessibilityScore    ?? 0) - (prevFastest    ?? 0)) >= 3
         let accessibleChanged = abs((accessibleEvaluation?.accessibilityScore ?? 0) - (prevAccessible ?? 0)) >= 3
 
@@ -135,7 +153,6 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
         selectedDestination = destination
         isRouteActive = false
         lastKnownTileCount = HeatmapStore.shared.allTiles.count
-        // Persistencia (Item 12): guardar último destino elegido
         PersistenceService.shared.saveLastDestination(name: destination.name)
         fetchRoutes(to: destination)
     }
@@ -145,7 +162,6 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
         if let eval = activeEvaluation { focusMap(on: eval.route) }
     }
 
-    // PASO 3: Inicia la ruta activa
     func startRoute() {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             isRouteActive = true
@@ -165,6 +181,8 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
         selectedMode         = .accessible
         isRouteActive        = false
         cachedMKRoutes       = []
+        searchText           = ""
+        searchResults        = []
     }
 
     // MARK: - Route Fetching
@@ -199,10 +217,9 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
                     self.generateMockRoutes(to: destination, errorMsg: nil)
                     return
                 }
-                // Cachear las rutas crudas para reevaluar luego sin re-fetch
                 self.cachedMKRoutes = response.routes
 
-                let tiles = HeatmapStore.shared.allTiles        // ← usa allTiles
+                let tiles = HeatmapStore.shared.allTiles
                 let profile = ProfileService.shared.currentProfile
                 self.activeProfile = profile
                 let evaluations = response.routes.map { RouteEngine.evaluate(route: $0, tiles: tiles, profile: profile) }
@@ -217,7 +234,7 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
         }
     }
 
-    // MARK: - Mock routes (fallback para simulador)
+    // MARK: - Mock routes (fallback)
 
     private func generateMockRoutes(to destination: MockDestination, errorMsg: String?) {
         let origin = originCoordinate
@@ -243,16 +260,14 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
         let directRoute = MockRoute(polyline: directPolyline,  distance: 820,  time: 660)
         let detourRoute = MockRoute(polyline: detourPolyline,  distance: 1050, time: 840)
 
-        // Cachear también los mock routes para que reevalúen igual
         cachedMKRoutes = [directRoute, detourRoute]
 
-        let tiles = HeatmapStore.shared.allTiles                // ← usa allTiles
+        let tiles = HeatmapStore.shared.allTiles
         let profile = ProfileService.shared.currentProfile
         activeProfile = profile
         fastestEvaluation    = RouteEngine.evaluate(route: directRoute, tiles: tiles, profile: profile)
         accessibleEvaluation = RouteEngine.evaluate(route: detourRoute, tiles: tiles, profile: profile)
 
-        // Si no hay tiles aún, inyectar scores narrativos para el demo
         if tiles.isEmpty {
             fastestEvaluation = RouteEvaluation(
                 route: directRoute,

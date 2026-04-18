@@ -13,6 +13,10 @@ struct InsightAppApp: App {
     @StateObject private var themeManager = ThemeManager()
     @StateObject private var profileService = ProfileService.shared
 
+    init() {
+        MotionAccessibilityService.shared.checkAvailability()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
