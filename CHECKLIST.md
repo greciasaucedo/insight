@@ -110,3 +110,75 @@ Called from `MapView.body` via `.task { await store.loadRemoteTiles(near: vm.reg
 ## Task 3.7 — ScanView wired to TileAPIService ✅
 **File:** `InsightApp/Views/Detecta/ScanView.swift`
 After local `addTile`, background `Task` calls `TileAPIService.shared.saveTile(lastTile, isSimulated: demo)`. `isUsingDemo` captured before Task to survive `reset()`. Error caught and discarded — UX never blocked.
+
+---
+
+## Phase 4 — Authentication & Profile Backend
+
+## Task 4.1 — AuthUser model ✅
+**File:** `InsightApp/Models/AuthUser.swift`
+`Codable` struct: `id`, `firstName`, `lastName`, `phone`, `displayName`. Persisted to UserDefaults.
+
+## Task 4.2 — AuthService ✅
+**File:** `InsightApp/Views/Services/AuthService.swift`
+GoTrue REST via URLSession. Virtual email `{digits}@insight.app` lets users auth with phone+password.
+- `signUp(firstName:lastName:phone:password:)` → creates Supabase auth.users entry
+- `signIn(phone:password:)` → returns JWT session
+- `signOut()` → revokes server token, clears local session
+- `updateInfo(firstName:lastName:)` → updates user_metadata
+- `changePassword(newPassword:)` → updates password
+- Session persisted across app restarts via UserDefaults.
+- Typed `AuthError` with Spanish messages for all GoTrue error codes.
+> **Action required (Supabase dashboard):**
+> Authentication → Configuration → **Disable "Confirm email"**
+
+## Task 4.3 — SignUpView calls AuthService ✅
+**File:** `InsightApp/Views/Onboarding/Sign up & Login Screens/SignUpView.swift`
+Button shows ProgressView while loading. On success → navigates to PersonalizationView (continues onboarding). On failure → shows red `authError` message in Spanish.
+
+## Task 4.4 — LoginView calls AuthService ✅
+**File:** `InsightApp/Views/Onboarding/Sign up & Login Screens/LoginView.swift`
+On success → sets `didFinishOnboarding = true` (bypasses re-onboarding, goes straight to map). On failure → shows error. Removed wrong navigation to PersonalizationView.
+
+## Task 4.5 — ProfileView shows real user data ✅
+**File:** `InsightApp/ProfileView.swift`
+Header shows `AuthUser.displayName` and phone number from `AuthService.shared.currentUser` (falls back to accessibility profile name if unauthenticated).
+- **Editar información**: sheet with firstName/lastName fields → calls `AuthService.updateInfo`
+- **Cambiar contraseña**: sheet with new+confirm password → validates match + ≥8 chars → calls `AuthService.changePassword`
+- **Cerrar sesión**: calls `AuthService.signOut()` + `PersistenceService.clearAll()` + resets onboarding flag
+
+## Task 4.6 — Auth token used in all Supabase requests ✅
+**Files:** `InsightApp/Views/Services/TileAPIService.swift`, `InsightApp/Views/Services/SupabaseService.swift`
+`makeRequest` uses `AuthService.shared.accessToken` as Bearer when authenticated; falls back to anon key.
+`TileSavePayload` includes `user_id` from `AuthService.shared.currentUser?.id`.
+`ProfilePayload` includes `user_id`, `first_name`, `last_name`, `phone`.
+
+## Task 4.7 — Supabase SQL migration ⚠️ MANUAL STEP
+Run in Supabase SQL editor:
+```sql
+-- Extend user_profiles to store real user data
+ALTER TABLE user_profiles
+  ADD COLUMN IF NOT EXISTS user_id    uuid REFERENCES auth.users(id),
+  ADD COLUMN IF NOT EXISTS first_name text,
+  ADD COLUMN IF NOT EXISTS last_name  text,
+  ADD COLUMN IF NOT EXISTS phone      text;
+
+-- Prevent duplicate profiles per user (skip if constraint already exists)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'user_profiles_user_id_key'
+  ) THEN
+    ALTER TABLE user_profiles ADD CONSTRAINT user_profiles_user_id_key UNIQUE (user_id);
+  END IF;
+END $$;
+
+-- Link tiles to authenticated users
+ALTER TABLE accessibility_tiles
+  ADD COLUMN IF NOT EXISTS user_id uuid REFERENCES auth.users(id);
+```
+
+## Task 4.8 — Console noise (simulator only) ℹ️ NOT A BUG
+Lines beginning with `PerfPowerTelemetry`, `CAMetalLayer`, `default.csv`, `PPSClientDonation`,
+`RBSServiceErrorDomain`, `elapsedCPUTimeForFrontBoard` are **simulator sandbox restrictions** — they
+never appear on a physical device and require no code changes.

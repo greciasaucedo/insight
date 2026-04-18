@@ -30,6 +30,10 @@ private struct TilePayload: Encodable {
 
 private struct ProfilePayload: Encodable {
     let device_id: String
+    let user_id: String?
+    let first_name: String?
+    let last_name: String?
+    let phone: String?
     let accessibility_profile: String
 }
 
@@ -111,8 +115,12 @@ final class SupabaseService {
         guard SupabaseConfig.projectURL != "https://YOUR_PROJECT_ID.supabase.co" else { return }
 
         let payload = ProfilePayload(
-            device_id:              deviceID,
-            accessibility_profile:  profile.rawValue
+            device_id:             deviceID,
+            user_id:               AuthService.shared.currentUser?.id,
+            first_name:            AuthService.shared.currentUser?.firstName,
+            last_name:             AuthService.shared.currentUser?.lastName,
+            phone:                 AuthService.shared.currentUser?.phone,
+            accessibility_profile: profile.rawValue
         )
 
         do {
@@ -154,7 +162,8 @@ final class SupabaseService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        let bearer = AuthService.shared.accessToken ?? SupabaseConfig.anonKey
+        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         return request
     }
 }

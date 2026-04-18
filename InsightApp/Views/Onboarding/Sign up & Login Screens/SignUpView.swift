@@ -15,6 +15,8 @@ struct SignUpView: View {
     @State private var showPassword = false
     @State private var showErrors = false
     @State private var navigate = false
+    @State private var isLoading = false
+    @State private var authError: String?
     @EnvironmentObject var themeManager: ThemeManager
 
     private var isFirstNameValid: Bool { !firstName.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -138,22 +140,48 @@ struct SignUpView: View {
                 }
                 .hidden()
 
+                if let err = authError {
+                    Text(err)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                }
+
                 Button(action: {
-                    if isFormValid {
-                        navigate = true
-                    } else {
-                        showErrors = true
+                    guard isFormValid else { showErrors = true; return }
+                    authError = nil
+                    isLoading = true
+                    Task {
+                        do {
+                            try await AuthService.shared.signUp(
+                                firstName: firstName.trimmingCharacters(in: .whitespaces),
+                                lastName:  lastName.trimmingCharacters(in: .whitespaces),
+                                phone:     phoneNumber,
+                                password:  password
+                            )
+                            navigate = true
+                        } catch {
+                            authError = error.localizedDescription
+                        }
+                        isLoading = false
                     }
                 }) {
-                    Text("Continuar")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(themeManager.primaryColor)
-                        .cornerRadius(16)
-                        .opacity(isFormValid ? 1 : 0.5)
+                    Group {
+                        if isLoading {
+                            ProgressView().tint(.white)
+                        } else {
+                            Text("Continuar").font(.headline)
+                        }
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(themeManager.primaryColor)
+                    .cornerRadius(16)
+                    .opacity(isFormValid ? 1 : 0.5)
                 }
+                .disabled(isLoading)
                 .padding(.horizontal, 24)
                 .padding(.top, 8)
 

@@ -80,7 +80,8 @@ final class TileAPIService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
-        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        let bearer = AuthService.shared.accessToken ?? SupabaseConfig.anonKey
+        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         return request
     }
 }
@@ -98,6 +99,7 @@ private struct TileSavePayload: Encodable {
     let source: String
     let label: String
     let device_id: String
+    let user_id: String?
     let profile_used: String
 
     init(tile: AccessibilityTile, isSimulated: Bool) {
@@ -111,6 +113,7 @@ private struct TileSavePayload: Encodable {
         source              = tile.isUserScanned ? "camera" : "mock"
         label               = tile.reasons.first ?? ""
         device_id           = UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
+        user_id             = AuthService.shared.currentUser?.id
         profile_used        = ProfileService.shared.currentProfile.rawValue
     }
 }

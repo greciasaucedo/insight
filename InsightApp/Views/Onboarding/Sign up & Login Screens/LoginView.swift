@@ -12,7 +12,9 @@ struct LoginView: View {
     @State private var password = ""
     @State private var showPassword = false
     @State private var showErrors = false
-    @State private var navigate = false
+    @State private var isLoading = false
+    @State private var authError: String?
+    @AppStorage("didFinishOnboarding") private var didFinishOnboarding = false
     @EnvironmentObject var themeManager: ThemeManager
 
     private var isPhoneValid:    Bool { !phoneNumber.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -91,27 +93,43 @@ struct LoginView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 10)
 
-                NavigationLink(destination: PersonalizationView(), isActive: $navigate) {
-                    EmptyView()
+                if let err = authError {
+                    Text(err)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
                 }
-                .hidden()
 
                 Button(action: {
-                    if isFormValid {
-                        navigate = true
-                    } else {
-                        showErrors = true
+                    guard isFormValid else { showErrors = true; return }
+                    authError = nil
+                    isLoading = true
+                    Task {
+                        do {
+                            try await AuthService.shared.signIn(phone: phoneNumber, password: password)
+                            didFinishOnboarding = true
+                        } catch {
+                            authError = error.localizedDescription
+                        }
+                        isLoading = false
                     }
                 }) {
-                    Text("Iniciar sesión")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(themeManager.primaryColor)
-                        .cornerRadius(16)
-                        .opacity(isFormValid ? 1 : 0.5)
+                    Group {
+                        if isLoading {
+                            ProgressView().tint(.white)
+                        } else {
+                            Text("Iniciar sesión").font(.headline)
+                        }
+                    }
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(themeManager.primaryColor)
+                    .cornerRadius(16)
+                    .opacity(isFormValid ? 1 : 0.5)
                 }
+                .disabled(isLoading)
                 .padding(.horizontal, 24)
                 .padding(.top, 8)
 
