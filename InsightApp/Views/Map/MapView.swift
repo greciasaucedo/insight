@@ -71,7 +71,11 @@ enum AccessibilityLevel {
 }
 
 // MARK: - Shared Heatmap Store
-// Single source of truth shared between MapView and ScanView
+// FIX 1: Eliminado DispatchQueue.main.async innecesario.
+// HeatmapStore es observado desde SwiftUI (@ObservedObject), por lo que
+// las mutaciones a @Published ya deben ocurrir en el main thread.
+// Agregar un async innecesario causaba un ciclo extra que podía romper
+// el .onChange de MapView en demos en vivo.
 
 class HeatmapStore: ObservableObject {
     static let shared = HeatmapStore()
@@ -85,9 +89,8 @@ class HeatmapStore: ObservableObject {
             reasons: reasons,
             isUserScanned: true
         )
-        DispatchQueue.main.async {
-            self.scannedTiles.append(tile)
-        }
+        // FIX 1: directo al array, sin DispatchQueue.main.async
+        scannedTiles.append(tile)
     }
 }
 
@@ -122,12 +125,15 @@ class MapViewModel: ObservableObject {
         guard !newTiles.isEmpty else { return }
         for tile in newTiles {
             knownScannedIDs.insert(tile.id)
-            withAnimation(.easeInOut(duration: 0.35)) {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                 tiles.append(tile)
             }
+            // Activar pulso en el tile recién agregado
             newTileFlash = tile.id
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                self.newTileFlash = nil
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                if self.newTileFlash == tile.id {
+                    self.newTileFlash = nil
+                }
             }
         }
         hasData = true
@@ -213,6 +219,7 @@ struct MapView: View {
     @StateObject private var vm = MapViewModel()
     @ObservedObject private var heatmapStore = HeatmapStore.shared
     @State private var showScan = false
+    @State private var showRoute = false
     @State private var searchText = ""
     @State private var showBottomSheet = false
     @State private var animateTiles = false
@@ -300,11 +307,20 @@ struct MapView: View {
         .onAppear {
             withAnimation(.easeIn(duration: 0.5).delay(0.7)) { animateTiles = true }
         }
-        .onChange(of: heatmapStore.scannedTiles.count) { _ in
+        // FIX 2: Firma compatible con iOS 16 y iOS 17+
+        // En iOS 16 la firma de onChange es (oldValue, newValue) -> Void
+        // En iOS 17+ es (newValue) -> Void
+        // Usar la variante de dos parámetros cubre ambos casos sin warnings.
+        .onChange(of: heatmapStore.scannedTiles.count) { _, _ in
             vm.mergeScan(heatmapStore.scannedTiles)
         }
         .fullScreenCover(isPresented: $showScan) {
             ScanView()
+        }
+        .fullScreenCover(isPresented: $showRoute) {
+            NavigationStack {
+                RouteView()
+            }
         }
     }
 
@@ -339,6 +355,20 @@ struct MapView: View {
 
     var floatingButtonsColumn: some View {
         VStack(spacing: 12) {
+            // Botón Crear Ruta
+            Button { showRoute = true } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "figure.roll").font(.system(size: 16, weight: .semibold))
+                    Text("Crear ruta").font(.system(size: 14, weight: .semibold, design: .rounded))
+                }
+                .foregroundColor(.black)
+                .padding(.horizontal, 16).padding(.vertical, 12)
+                .background(primaryColor, in: RoundedRectangle(cornerRadius: 14))
+                .shadow(color: primaryColor.opacity(0.45), radius: 8, x: 0, y: 4)
+            }
+            .accessibilityLabel("Crear ruta accesible hacia un destino")
+
+            // Botón Scan Area
             Button { showScan = true } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "camera.viewfinder").font(.system(size: 16, weight: .semibold))
@@ -346,8 +376,9 @@ struct MapView: View {
                 }
                 .foregroundColor(.white)
                 .padding(.horizontal, 16).padding(.vertical, 12)
-                .background(primaryColor, in: RoundedRectangle(cornerRadius: 14))
-                .shadow(color: primaryColor.opacity(0.45), radius: 8, x: 0, y: 4)
+                .background(Color.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(primaryColor.opacity(0.5), lineWidth: 1))
+                .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
             }
             .accessibilityLabel("Escanear área para detectar accesibilidad")
 
@@ -427,6 +458,12 @@ struct MapView: View {
 }
 
 // MARK: - Heatmap Tile View
+// FIX 3: Animación de pulso corregida.
+// El problema original era que la animación usaba el mismo booleano (isPulsing)
+// para iniciar Y para terminar el efecto, causando que al poner isPulsing=false
+// la animación se invirtiera visualmente (el tile "desaparecía").
+// Solución: usar un @State local `pulseScale` que se anima de forma one-shot
+// al detectar isPulsing=true, sin depender del valor de retorno.
 
 struct HeatmapTileView: View {
     let tile: AccessibilityTile
@@ -434,6 +471,9 @@ struct HeatmapTileView: View {
     let geoSize: CGSize
     let animated: Bool
     let isPulsing: Bool
+
+    @State private var pulseOpacity: Double = 0.6
+    @State private var pulseScale: CGFloat = 0.8
 
     var position: CGPoint {
         let latDelta = tile.coordinate.latitude - mapRegion.center.latitude
@@ -449,16 +489,23 @@ struct HeatmapTileView: View {
     var body: some View {
         if tile.accessibilityLevel != .noData {
             ZStack {
+                // FIX 3: Onda de pulso — se expande hacia afuera y desvanece (one-shot)
+                // No depende de isPulsing como estado de retorno, solo como trigger de entrada.
                 if isPulsing {
                     Circle()
-                        .fill(tileColor.opacity(0.25))
+                        .fill(tileColor.opacity(pulseOpacity))
                         .frame(width: tileRadius * 2.6, height: tileRadius * 2.6)
+                        .scaleEffect(pulseScale)
                         .position(position)
-                        .scaleEffect(isPulsing ? 1.3 : 1.0)
-                        .opacity(isPulsing ? 0.0 : 0.5)
-                        .animation(.easeOut(duration: 0.9).repeatCount(2, autoreverses: false), value: isPulsing)
+                        .onAppear {
+                            withAnimation(.easeOut(duration: 1.0)) {
+                                pulseScale = 1.5
+                                pulseOpacity = 0.0
+                            }
+                        }
                 }
 
+                // Heatmap blob base
                 Ellipse()
                     .fill(RadialGradient(
                         gradient: Gradient(colors: [
@@ -472,6 +519,7 @@ struct HeatmapTileView: View {
                     .position(position)
                     .animation(.easeInOut(duration: 0.28), value: animated)
 
+                // Punto central para tiles escaneados por el usuario
                 if tile.isUserScanned {
                     Circle()
                         .fill(tileColor)
@@ -479,9 +527,20 @@ struct HeatmapTileView: View {
                         .overlay(Circle().stroke(.white, lineWidth: 1.5))
                         .shadow(color: tileColor.opacity(0.6), radius: 4, x: 0, y: 2)
                         .position(position)
+                        // FIX 3: Entrada con spring para tiles nuevos
+                        .scaleEffect(animated ? 1.0 : 0.0)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.6).delay(0.1), value: animated)
                 }
             }
             .allowsHitTesting(true)
+            // FIX 3: Reset del estado de pulso cuando isPulsing vuelve a false
+            // para que el próximo scan pueda reutilizar la animación
+            .onChange(of: isPulsing) { _, newValue in
+                if newValue {
+                    pulseScale = 0.8
+                    pulseOpacity = 0.6
+                }
+            }
         }
     }
 }
@@ -506,6 +565,9 @@ struct FloatingIconButton: View {
 }
 
 // MARK: - Bottom Sheet
+// FIX 4: Para tiles escaneados por el usuario se muestra el tipo detectado
+// (la primera entrada de `reasons`) junto con score y confianza.
+// Esto completa el requisito Human-Centered AI: tipo + score + confianza + razón.
 
 struct BottomSheetView: View {
     let tile: AccessibilityTile
@@ -524,6 +586,16 @@ struct BottomSheetView: View {
     }
 
     var statusColor: Color { tile.accessibilityLevel.color }
+
+    // FIX 4: Icono representativo del tipo detectado según la razón principal
+    func typeIcon(from reasons: [String]) -> String {
+        guard let first = reasons.first?.lowercased() else { return "camera.fill" }
+        if first.contains("rampa")      { return "road.lanes" }
+        if first.contains("escalera")   { return "figure.stairs" }
+        if first.contains("obstáculo")  { return "exclamationmark.triangle.fill" }
+        if first.contains("plana")      { return "checkmark.seal.fill" }
+        return "camera.fill"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -565,7 +637,65 @@ struct BottomSheetView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("\(tile.accessibilityLevel.voiceOverLabel), puntuación \(tile.accessibilityScore) de 100, confianza \(tile.confidenceLabel)")
 
-            if !tile.reasons.isEmpty {
+            // FIX 4: Bloque de tipo detectado — solo visible para tiles escaneados por el usuario
+            // Muestra: tipo detectado + score en porcentaje + razón principal
+            if tile.isUserScanned, let mainReason = tile.reasons.first {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Detección por cámara")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundColor(.secondary)
+                        .padding(.top, 20)
+
+                    HStack(spacing: 10) {
+                        // Tipo detectado con ícono
+                        HStack(spacing: 6) {
+                            Image(systemName: typeIcon(from: tile.reasons))
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(statusColor)
+                            Text(mainReason)
+                                .font(.system(size: 14, weight: .medium, design: .rounded))
+                                .foregroundColor(.primary)
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(statusColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+
+                        Spacer()
+
+                        // Score como porcentaje de confianza del modelo
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text("Score")
+                                .font(.system(size: 11, design: .rounded))
+                                .foregroundColor(.secondary)
+                            Text("\(tile.accessibilityScore)")
+                                .font(.system(size: 18, weight: .bold, design: .rounded))
+                                .foregroundColor(statusColor)
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Detección por cámara: \(mainReason), score \(tile.accessibilityScore)")
+            }
+
+            // Factores adicionales (si hay más de uno)
+            if tile.reasons.count > 1 {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Factores adicionales")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundColor(.secondary)
+                        .padding(.top, tile.isUserScanned ? 12 : 20)
+                    ForEach(tile.reasons.dropFirst(), id: \.self) { reason in
+                        HStack(spacing: 8) {
+                            Circle().fill(statusColor.opacity(0.6)).frame(width: 6, height: 6)
+                            Text(reason).font(.system(size: 15, weight: .regular, design: .rounded))
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Factores adicionales: \(tile.reasons.dropFirst().joined(separator: ", "))")
+            } else if !tile.isUserScanned, !tile.reasons.isEmpty {
+                // Para tiles no escaneados, mostrar todos los factores como antes
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Factores detectados")
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -578,8 +708,6 @@ struct BottomSheetView: View {
                     }
                 }
                 .padding(.horizontal, 20)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Factores: \(tile.reasons.joined(separator: ", "))")
             }
 
             Divider().padding(.vertical, 18).padding(.horizontal, 20)

@@ -70,18 +70,14 @@ struct ScanResult {
         }
     }
 
+    // FIX 4: reasons con contexto de fuente (real vs demo) — se asigna desde el ViewModel
     var reasons: [String] {
         switch label.lowercased() {
-        case "obstacle":
-            return ["Obstáculo detectado por cámara"]
-        case "stairs":
-            return ["Escaleras detectadas"]
-        case "ramp":
-            return ["Rampa detectada"]
-        case "flat":
-            return ["Superficie plana detectada"]
-        default:
-            return ["Zona analizada por cámara"]
+        case "obstacle": return ["Obstáculo detectado por cámara"]
+        case "stairs":   return ["Escaleras detectadas por cámara"]
+        case "ramp":     return ["Rampa detectada por cámara"]
+        case "flat":     return ["Superficie plana detectada por cámara"]
+        default:         return ["Zona analizada por cámara"]
         }
     }
 }
@@ -95,6 +91,11 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
     @Published var isAnalyzing = false
     @Published var errorMessage: String? = nil
     @Published var showSuccess = false
+
+    // FIX 3 (ViewModel): Flag explícito para saber si se está usando el modo demo.
+    // Se expone a la UI para mostrar el badge "Modo demo" en la prediction card,
+    // protegiendo el demo si CoreML no carga en el dispositivo del jurado.
+    @Published var isUsingDemo = false
 
     private let locationManager = CLLocationManager()
     private(set) var currentLocation = CLLocationCoordinate2D(latitude: 25.6714, longitude: -100.3098)
@@ -118,10 +119,14 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
             return
         }
 
+        // FIX 3: Se setea isUsingDemo ANTES de bifurcar, para que la UI
+        // pueda reflejar el modo en cuanto empieza el análisis.
         if let model = try? AccessibilitySurfaceClassifier_1(configuration: MLModelConfiguration()),
            let visionModel = try? VNCoreMLModel(for: model.model) {
+            isUsingDemo = false
             runVision(cgImage: cgImage, model: visionModel)
         } else {
+            isUsingDemo = true
             simulatePrediction()
         }
     }
@@ -161,10 +166,10 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
     }
 
     private func simulatePrediction() {
-        let classes = [
-            ("flat", Float(0.93)),
-            ("ramp", Float(0.88)),
-            ("stairs", Float(0.79)),
+        let classes: [(String, Float)] = [
+            ("flat",     Float(0.93)),
+            ("ramp",     Float(0.88)),
+            ("stairs",   Float(0.79)),
             ("obstacle", Float(0.71))
         ]
 
@@ -184,18 +189,27 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
     func useScan() {
         guard let result = scanResult else { return }
 
+        // FIX 4: Si estamos en modo demo, agregar "(simulado)" a la razón
+        // para que el jurado vea transparencia en el BottomSheet del mapa.
+        let reasons: [String]
+        if isUsingDemo {
+            reasons = result.reasons.map { $0 + " (simulado)" }
+        } else {
+            reasons = result.reasons
+        }
+
         HeatmapStore.shared.addTile(
             coordinate: result.coordinate,
             score: result.accessibilityScore,
             confidence: Double(result.confidence),
-            reasons: result.reasons
+            reasons: reasons
         )
 
         withAnimation {
             showSuccess = true
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
             self.reset()
         }
     }
@@ -205,6 +219,7 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
         scanResult = nil
         showSuccess = false
         errorMessage = nil
+        isUsingDemo = false
     }
 
     // MARK: - CLLocationManagerDelegate
@@ -367,11 +382,11 @@ struct ScanView: View {
                     .font(.system(size: 26, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
 
+                // Score de accesibilidad
                 HStack(spacing: 6) {
                     Image(systemName: "chart.bar.fill")
                         .font(.system(size: 11))
-
-                    Text("Confianza: \(Int(result.confidence * 100))%")
+                    Text("Score: \(result.accessibilityScore) / 100")
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                 }
                 .foregroundColor(result.accessibilityLevel.color)
@@ -379,14 +394,59 @@ struct ScanView: View {
                 .padding(.vertical, 5)
                 .background(result.accessibilityLevel.color.opacity(0.15), in: Capsule())
 
+                // Confianza del modelo
+                HStack(spacing: 6) {
+                    Image(systemName: "brain")
+                        .font(.system(size: 11))
+                    Text("Confianza: \(Int(result.confidence * 100))%")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                }
+                .foregroundColor(.white.opacity(0.6))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(.white.opacity(0.08), in: Capsule())
+
+                // FIX 3: Badge "Modo demo" — visible solo cuando CoreML no está disponible
+                // Permite hacer el demo sin depender del modelo compilado
+                if vm.isUsingDemo {
+                    HStack(spacing: 5) {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 11))
+                        Text("Modo demo")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundColor(.orange)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(.orange.opacity(0.15), in: Capsule())
+                    .overlay(Capsule().stroke(.orange.opacity(0.3), lineWidth: 1))
+                }
+
                 Text(result.description)
                     .font(.system(size: 14, weight: .regular, design: .rounded))
                     .foregroundColor(.white.opacity(0.6))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
+
+                // FIX 4: Razón principal visible directamente en la prediction card
+                if let reason = result.reasons.first {
+                    HStack(spacing: 6) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12))
+                        Text(reason)
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(.white.opacity(0.5))
+                    .padding(.top, 2)
+                }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("\(result.localizedLabel). \(result.description). Confianza: \(Int(result.confidence * 100)) por ciento.")
+            .accessibilityLabel(
+                "\(result.localizedLabel). \(result.description). " +
+                "Score: \(result.accessibilityScore). " +
+                "Confianza: \(Int(result.confidence * 100)) por ciento." +
+                (vm.isUsingDemo ? " Modo demo activo." : "")
+            )
 
             HStack(spacing: 8) {
                 Circle()
@@ -504,12 +564,14 @@ struct ScanView: View {
     }
 
     // MARK: - Success Overlay
+    // FIX visual: El overlay ahora muestra el tipo detectado y el score
+    // para que el "feedback de confirmación" sea informativo, no solo decorativo.
 
     var successOverlay: some View {
         ZStack {
             Color.black.opacity(0.5).ignoresSafeArea()
 
-            VStack(spacing: 16) {
+            VStack(spacing: 14) {
                 Image(systemName: "map.fill")
                     .font(.system(size: 44))
                     .foregroundColor(primaryColor)
@@ -518,9 +580,23 @@ struct ScanView: View {
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
 
+                if let result = vm.scanResult {
+                    HStack(spacing: 6) {
+                        Image(systemName: result.icon)
+                            .font(.system(size: 14))
+                            .foregroundColor(result.accessibilityLevel.color)
+                        Text("\(result.localizedLabel) · Score \(result.accessibilityScore)")
+                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                            .foregroundColor(result.accessibilityLevel.color)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(result.accessibilityLevel.color.opacity(0.15), in: Capsule())
+                }
+
                 Text("La zona ya aparece en el heatmap")
-                    .font(.system(size: 14, design: .rounded))
-                    .foregroundColor(.white.opacity(0.7))
+                    .font(.system(size: 13, design: .rounded))
+                    .foregroundColor(.white.opacity(0.6))
             }
             .padding(36)
             .background(.black.opacity(0.85), in: RoundedRectangle(cornerRadius: 24))
