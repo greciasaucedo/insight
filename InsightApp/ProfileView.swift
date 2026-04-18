@@ -6,17 +6,17 @@
 //
 
 import SwiftUI
-import UIKit
 
 struct ProfileView: View {
 
     @EnvironmentObject var themeManager: ThemeManager
     @AppStorage("didFinishOnboarding") private var didFinishOnboarding = false
+    @ObservedObject private var profileService = ProfileService.shared
+    @Environment(\.openURL) private var openURL
     @State private var highContrast = true
     @State private var voiceGuidance = false
     @State private var hapticFeedback = true
     @State private var selectedColorMode: ColorAccessibilityMode = .defaultMode
-    @State private var selectedProfile: AccessibilityProfile = ProfileService.shared.current
 
     var body: some View {
         NavigationStack {
@@ -41,7 +41,7 @@ struct ProfileView: View {
 
     private var headerSection: some View {
         VStack(spacing: 14) {
-            Image(systemName: selectedProfile.icon)
+            Image(systemName: profileService.currentProfile.icon)
                 .font(.system(size: 72))
                 .foregroundStyle(themeManager.primaryColor)
 
@@ -50,7 +50,7 @@ struct ProfileView: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.secondary)
 
-                Text(selectedProfile.displayName)
+                Text(profileService.currentProfile.displayName)
                     .font(.system(size: 26, weight: .bold))
             }
 
@@ -131,20 +131,19 @@ struct ProfileView: View {
 
                 ForEach(AccessibilityProfile.allCases) { profile in
                     Button(action: {
-                        selectedProfile = profile
-                        ProfileService.shared.current = profile
+                        profileService.setProfile(profile)
                         Task { await SupabaseService.shared.saveProfile(profile) }
                     }) {
                         HStack(spacing: 12) {
                             Image(systemName: profile.icon)
-                                .foregroundStyle(selectedProfile == profile ? themeManager.primaryColor : .secondary)
+                                .foregroundStyle(profileService.currentProfile == profile ? themeManager.primaryColor : .secondary)
                                 .frame(width: 24)
                             Text(profile.displayName)
                                 .font(.system(size: 16, weight: .medium))
                                 .foregroundStyle(.primary)
                             Spacer()
-                            Image(systemName: selectedProfile == profile ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(selectedProfile == profile ? themeManager.primaryColor : .secondary.opacity(0.4))
+                            Image(systemName: profileService.currentProfile == profile ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(profileService.currentProfile == profile ? themeManager.primaryColor : .secondary.opacity(0.4))
                                 .font(.system(size: 20))
                         }
                         .padding(.vertical, 4)
@@ -172,8 +171,8 @@ struct ProfileView: View {
                 PermissionStatusRow(title: "Movimiento", icon: "figure.walk.motion", status: "Activado", statusColor: .green)
 
                 Button(action: {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(url)
+                    if let url = URL(string: "app-settings:") {
+                        openURL(url)
                     }
                 }) {
                     Text("Abrir configuración")

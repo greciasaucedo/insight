@@ -35,5 +35,7 @@ Icon
 Pods/
 Podfile.lock
 
-# Supabase credentials — copy SupabaseConfig.swift.example → SupabaseConfig.swift and fill in your values
+# Supabase credentials — NEVER commit either of these files
+# Copy SupabaseConfig.example.swift → SupabaseConfig.swift and fill in your values
 InsightApp/Views/Services/SupabaseConfig.swift
+InsightApp/Config/SupabaseConfig.swift

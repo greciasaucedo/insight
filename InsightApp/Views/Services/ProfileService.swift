@@ -4,21 +4,18 @@
 //
 
 import Foundation
+import Combine
 
-final class ProfileService {
+final class ProfileService: ObservableObject {
     static let shared = ProfileService()
-    private init() {}
+    private init() {
+        currentProfile = PersistenceService.shared.loadProfile()
+    }
 
-    private let key = "insight.accessibilityProfile.v1"
+    @Published private(set) var currentProfile: AccessibilityProfile
 
-    var current: AccessibilityProfile {
-        get {
-            guard let raw = UserDefaults.standard.string(forKey: key),
-                  let profile = AccessibilityProfile(rawValue: raw) else { return .standard }
-            return profile
-        }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: key)
-        }
+    func setProfile(_ profile: AccessibilityProfile) {
+        currentProfile = profile
+        PersistenceService.shared.saveProfile(profile)
     }
 }

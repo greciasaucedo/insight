@@ -11,11 +11,13 @@ import SwiftUI
 struct InsightAppApp: App {
     
     @StateObject private var themeManager = ThemeManager()
-    
+    @StateObject private var profileService = ProfileService.shared
+
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(themeManager)
+                .environmentObject(profileService)
         }
     }
 }

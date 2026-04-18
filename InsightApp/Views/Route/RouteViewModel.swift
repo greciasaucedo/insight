@@ -18,7 +18,7 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
 
     @Published var selectedDestination: MockDestination? = nil
     @Published var selectedMode: RouteMode = .accessible
-    @Published var activeProfile: AccessibilityProfile = ProfileService.shared.current
+    @Published var activeProfile: AccessibilityProfile = ProfileService.shared.currentProfile
     @Published var fastestEvaluation: RouteEvaluation?    = nil
     @Published var accessibleEvaluation: RouteEvaluation? = nil
     @Published var isLoading = false
@@ -55,6 +55,7 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
 
     // PASO 2: Cancellable del sink que escucha HeatmapStore
     private var tileObserver: AnyCancellable?
+    private var profileObserver: AnyCancellable?
     private var lastKnownTileCount = 0
 
     // MARK: - Init
@@ -65,6 +66,7 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
         locationManager.requestWhenInUseAuthorization()
         locationManager.startUpdatingLocation()
         subscribeToTileChanges()
+        subscribeToProfileChanges()
     }
 
     // MARK: - PASO 2: Suscripción reactiva a HeatmapStore
@@ -73,6 +75,17 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
     // si ya tenemos rutas cacheadas, reevaluamos contra los tiles actuales.
     // Esto es lo que produce el "wow moment": el usuario escanea una zona,
     // y el score de la ruta baja en tiempo real sin tocar nada.
+
+    private func subscribeToProfileChanges() {
+        profileObserver = ProfileService.shared.$currentProfile
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] newProfile in
+                guard let self else { return }
+                self.activeProfile = newProfile
+                self.reevaluateWithCurrentTiles()
+            }
+    }
 
     private func subscribeToTileChanges() {
         tileObserver = HeatmapStore.shared.$scannedTiles
@@ -90,7 +103,7 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
     private func reevaluateWithCurrentTiles() {
         guard !cachedMKRoutes.isEmpty else { return }
         let tiles = HeatmapStore.shared.allTiles
-        let profile = ProfileService.shared.current
+        let profile = ProfileService.shared.currentProfile
         activeProfile = profile
         let evaluations = cachedMKRoutes.map { RouteEngine.evaluate(route: $0, tiles: tiles, profile: profile) }
 
@@ -190,7 +203,7 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
                 self.cachedMKRoutes = response.routes
 
                 let tiles = HeatmapStore.shared.allTiles        // ← usa allTiles
-                let profile = ProfileService.shared.current
+                let profile = ProfileService.shared.currentProfile
                 self.activeProfile = profile
                 let evaluations = response.routes.map { RouteEngine.evaluate(route: $0, tiles: tiles, profile: profile) }
 
@@ -234,7 +247,7 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
         cachedMKRoutes = [directRoute, detourRoute]
 
         let tiles = HeatmapStore.shared.allTiles                // ← usa allTiles
-        let profile = ProfileService.shared.current
+        let profile = ProfileService.shared.currentProfile
         activeProfile = profile
         fastestEvaluation    = RouteEngine.evaluate(route: directRoute, tiles: tiles, profile: profile)
         accessibleEvaluation = RouteEngine.evaluate(route: detourRoute, tiles: tiles, profile: profile)

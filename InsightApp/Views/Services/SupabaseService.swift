@@ -26,18 +26,7 @@ private struct TilePayload: Encodable {
     let profile_used: String
 }
 
-private struct RemoteTile: Decodable {
-    let id: String?
-    let latitude: Double
-    let longitude: Double
-    let accessibility_score: Int
-    let confidence_score: Double
-    let reasons: [String]
-    let is_user_scanned: Bool
-    let is_simulated: Bool
-    let source: String?
-    let label: String?
-}
+// RemoteTile is defined in Models/RemoteTile.swift
 
 private struct ProfilePayload: Encodable {
     let device_id: String
@@ -110,15 +99,7 @@ final class SupabaseService {
         do {
             let (data, _) = try await URLSession.shared.data(for: request)
             let remote = try JSONDecoder().decode([RemoteTile].self, from: data)
-            return remote.map { r in
-                AccessibilityTile(
-                    coordinate:        CLLocationCoordinate2D(latitude: r.latitude, longitude: r.longitude),
-                    accessibilityScore: r.accessibility_score,
-                    confidenceScore:   r.confidence_score,
-                    reasons:           r.reasons,
-                    isUserScanned:     r.is_user_scanned
-                )
-            }
+            return remote.map { $0.toAccessibilityTile() }
         } catch {
             return []
         }

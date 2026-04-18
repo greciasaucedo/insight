@@ -96,29 +96,34 @@ class HeatmapStore: ObservableObject {
 
     init() {
         loadBaseTiles()
-        // Restaurar scans locales del usuario al arrancar la app
         let saved = PersistenceService.shared.loadScannedTiles()
         if !saved.isEmpty { scannedTiles = saved }
-        // Cargar capa comunitaria desde Supabase
-        Task { await loadCommunityTiles() }
+        // Remote tiles are loaded by MapView's .task modifier
     }
 
     @MainActor
-    func loadCommunityTiles() async {
-        let origin = baseTiles.first?.coordinate ?? CLLocationCoordinate2D(latitude: 25.6714, longitude: -100.3098)
-        let remote = await SupabaseService.shared.fetchNearbyTiles(lat: origin.latitude, lng: origin.longitude)
-        guard !remote.isEmpty else { return }
-        // Merge: only add tiles not already represented locally (by proximity)
-        let existing = allTiles
-        let newTiles = remote.filter { remoteTile in
-            !existing.contains { local in
-                let dLat = abs(local.coordinate.latitude  - remoteTile.coordinate.latitude)
-                let dLng = abs(local.coordinate.longitude - remoteTile.coordinate.longitude)
-                return dLat < 0.0002 && dLng < 0.0002
+    func loadRemoteTiles(near coordinate: CLLocationCoordinate2D) async {
+        do {
+            let remote = try await TileAPIService.shared.fetchNearbyTiles(
+                lat: coordinate.latitude, lng: coordinate.longitude
+            )
+            guard !remote.isEmpty else { return }
+            let existing = allTiles
+            // Dedup: skip any remote tile within ~5 m of an existing tile
+            let newTiles = remote
+                .map { $0.toAccessibilityTile() }
+                .filter { remoteTile in
+                    !existing.contains { local in
+                        let dLat = abs(local.coordinate.latitude  - remoteTile.coordinate.latitude)
+                        let dLng = abs(local.coordinate.longitude - remoteTile.coordinate.longitude)
+                        return dLat < 0.000045 && dLng < 0.000045
+                    }
+                }
+            if !newTiles.isEmpty {
+                baseTiles.append(contentsOf: newTiles)
             }
-        }
-        if !newTiles.isEmpty {
-            baseTiles.append(contentsOf: newTiles)
+        } catch {
+            // Non-fatal; tile fetch failure never blocks UX
         }
     }
 
@@ -248,8 +253,9 @@ class MapViewModel: ObservableObject {
 struct MapView: View {
     @StateObject private var vm = MapViewModel()
     @ObservedObject private var store = HeatmapStore.shared
-    @State private var showScan  = false
-    @State private var showRoute = false
+    @State private var showScan    = false
+    @State private var showRoute   = false
+    @State private var showProfile = false
     @State private var showBottomSheet = false
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
@@ -261,7 +267,7 @@ struct MapView: View {
             Map(coordinateRegion: $vm.region, showsUserLocation: true)
                 .ignoresSafeArea()
 
-            // Overlay: dibuja todos los tiles (base + scanned) desde allTiles
+            // Layer A — visual only, no gestures
             GeometryReader { geo in
                 ForEach(store.allTiles) { tile in
                     HeatmapTileView(
@@ -271,19 +277,31 @@ struct MapView: View {
                         animated: vm.animateTiles,
                         isPulsing: vm.newTileFlash == tile.id
                     )
-                    .onTapGesture {
-                        withAnimation(.spring(response: 0.3)) {
-                            vm.selectedTile = tile
-                            showBottomSheet = true
+                }
+            }
+            .allowsHitTesting(false)
+            .ignoresSafeArea()
+
+            // Layer B — transparent tap targets, restricted to circle area
+            GeometryReader { geo in
+                ForEach(store.allTiles.filter { $0.accessibilityLevel != .noData }) { tile in
+                    Color.clear
+                        .frame(width: 100, height: 100)
+                        .contentShape(Circle())
+                        .position(tilePosition(tile, size: geo.size))
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.3)) {
+                                vm.selectedTile = tile
+                                showBottomSheet = true
+                            }
+                            vm.triggerHaptic(for: tile.accessibilityLevel)
                         }
-                        vm.triggerHaptic(for: tile.accessibilityLevel)
-                    }
-                    .accessibilityElement()
-                    .accessibilityLabel(
-                        "\(tile.accessibilityLevel.voiceOverLabel), confianza \(tile.confidenceLabel)" +
-                        (tile.isUserScanned ? ", escaneado por ti" : "")
-                    )
-                    .accessibilityAddTraits(.isButton)
+                        .accessibilityElement()
+                        .accessibilityLabel(
+                            "\(tile.accessibilityLevel.voiceOverLabel), confianza \(tile.confidenceLabel)" +
+                            (tile.isUserScanned ? ", escaneado por ti" : "")
+                        )
+                        .accessibilityAddTraits(.isButton)
                 }
             }
             .ignoresSafeArea()
@@ -327,13 +345,13 @@ struct MapView: View {
                 .animation(.spring(response: 0.4, dampingFraction: 0.85), value: showBottomSheet)
             }
         }
+        .task { await store.loadRemoteTiles(near: vm.region.center) }
         .onChange(of: store.scannedTiles.count) { _, _ in
-            vm.processNewScans(store.scannedTiles)
+            Task { @MainActor in vm.processNewScans(store.scannedTiles) }
         }
-        .fullScreenCover(isPresented: $showScan)  { ScanView() }
-        .fullScreenCover(isPresented: $showRoute) {
-            NavigationStack { RouteView() }
-        }
+        .fullScreenCover(isPresented: $showScan)    { ScanView() }
+        .fullScreenCover(isPresented: $showRoute)   { NavigationStack { RouteView() } }
+        .fullScreenCover(isPresented: $showProfile) { ProfileView() }
     }
 
     // MARK: Search bar
@@ -357,9 +375,7 @@ struct MapView: View {
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
             .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 3)
 
-            NavigationLink {
-                ProfileView()
-            } label: {
+            Button { showProfile = true } label: {
                 Image(systemName: "person.circle.fill")
                     .font(.system(size: 34)).foregroundStyle(teal)
                     .background(Circle().fill(.regularMaterial))
@@ -447,6 +463,14 @@ struct MapView: View {
             .background(.regularMaterial, in: Capsule())
             .padding(.bottom, 110)
         }
+    }
+
+    private func tilePosition(_ tile: AccessibilityTile, size: CGSize) -> CGPoint {
+        let latDelta = tile.coordinate.latitude  - vm.region.center.latitude
+        let lonDelta = tile.coordinate.longitude - vm.region.center.longitude
+        let x = size.width  / 2 + CGFloat(lonDelta / vm.region.span.longitudeDelta) * size.width
+        let y = size.height / 2 - CGFloat(latDelta / vm.region.span.latitudeDelta)  * size.height
+        return CGPoint(x: x, y: y)
     }
 
     func errorBanner(message: String) -> some View {

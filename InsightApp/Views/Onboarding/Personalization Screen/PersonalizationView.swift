@@ -64,7 +64,7 @@ struct PersonalizationView: View {
             }
             .simultaneousGesture(TapGesture().onEnded {
                 let profile = AccessibilityProfile.from(options: selectedOptions)
-                ProfileService.shared.current = profile
+                ProfileService.shared.setProfile(profile)
                 Task { await SupabaseService.shared.saveProfile(profile) }
             })
             .padding(.horizontal, 24)

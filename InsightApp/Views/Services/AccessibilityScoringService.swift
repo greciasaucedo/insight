@@ -44,6 +44,26 @@ struct AccessibilityScoringService {
         return 0
     }
 
+    /// Returns a Double penalty to subtract from the route score, using profile-specific
+    /// multipliers from PenaltyWeights. Confidence and user-scanned adjustments are included.
+    static func adjustedPenalty(for tile: AccessibilityTile, profile: AccessibilityProfile) -> Double {
+        let weights = profile.penaltyWeights
+        let label   = tile.reasons.first?.lowercased()
+        let level   = tile.accessibilityLevel
+
+        var base: Double
+        if      label == "stairs"        { base = 20.0 * weights.stairs }
+        else if label == "obstacle"      { base = 20.0 * weights.obstacle }
+        else if label == "slope"         { base = 15.0 * weights.slope }
+        else if level == .notAccessible  { base = 20.0 * weights.limited }
+        else if level == .limited        { base = 10.0 * weights.limited }
+        else { return 0 }
+
+        if tile.isUserScanned         { base *= 1.4 }
+        if tile.confidenceScore < 0.4 { base *= 0.6 }
+        return base
+    }
+
     /// Returns a human-readable explanation for why this tile impacted the route,
     /// tailored to the user's profile. Returns nil when no specific message applies.
     static func explanationMessage(

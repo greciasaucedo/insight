@@ -100,12 +100,14 @@ final class PersistenceService {
     // Guarda el nombre del perfil elegido en Onboarding, útil para personalizar
     // las penalizaciones de RouteEngine según el tipo de usuario.
 
-    func saveProfile(_ profile: String) {
-        defaults.set(profile, forKey: profileKey)
+    func saveProfile(_ profile: AccessibilityProfile) {
+        defaults.set(profile.rawValue, forKey: profileKey)
     }
 
-    func loadProfile() -> String? {
-        defaults.string(forKey: profileKey)
+    func loadProfile() -> AccessibilityProfile {
+        guard let raw = defaults.string(forKey: profileKey),
+              let profile = AccessibilityProfile(rawValue: raw) else { return .standard }
+        return profile
     }
 
     // MARK: Clear (útil para tests / reset en ajustes)

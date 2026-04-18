@@ -205,14 +205,15 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
             reasons: reasons
         )
 
-        // Persist to Supabase collective layer (fire-and-forget)
+        // Background upload — failure is logged, never blocks UX
         if let lastTile = HeatmapStore.shared.scannedTiles.last {
+            let demo = isUsingDemo
             Task {
-                await SupabaseService.shared.saveTile(
-                    lastTile,
-                    label: result.label,
-                    profile: ProfileService.shared.current
-                )
+                do {
+                    try await TileAPIService.shared.saveTile(lastTile, isSimulated: demo)
+                } catch {
+                    // log only
+                }
             }
         }
 

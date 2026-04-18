@@ -115,7 +115,7 @@ final class RouteEngine {
     static func evaluate(
         route: MKRoute,
         tiles: [AccessibilityTile],
-        profile: AccessibilityProfile = ProfileService.shared.current
+        profile: AccessibilityProfile = ProfileService.shared.currentProfile
     ) -> RouteEvaluation {
         let routePoints = extractPoints(from: route.polyline)
         var score  = 100
@@ -175,16 +175,7 @@ final class RouteEngine {
     // MARK: Penalty
 
     private static func penaltyFor(tile: AccessibilityTile, profile: AccessibilityProfile) -> Int {
-        let label = tile.reasons.first  // use first reason as label hint
-        var base = AccessibilityScoringService.penalty(
-            for: tile.accessibilityLevel,
-            label: label,
-            profile: profile
-        )
-        guard base > 0 else { return 0 }
-        if tile.isUserScanned         { base = Int(Double(base) * 1.4) }   // +40% si lo escaneó el usuario
-        if tile.confidenceScore < 0.4 { base = Int(Double(base) * 0.6) }  // -40% si confianza baja
-        return base
+        Int(AccessibilityScoringService.adjustedPenalty(for: tile, profile: profile))
     }
 
     // MARK: Geometry
