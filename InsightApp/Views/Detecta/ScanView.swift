@@ -90,9 +90,14 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
     @Published var errorMessage: String? = nil
     @Published var showSuccess = false
     @Published var isUsingDemo = false
+    @Published var motionResult: TerrainMotionResult? = nil
+    @Published var isMeasuringMotion = false
 
     private let locationManager = CLLocationManager()
-    private(set) var currentLocation = CLLocationCoordinate2D(latitude: 25.6714, longitude: -100.3098)
+    private(set) var currentLocation = CLLocationCoordinate2D(
+        latitude: 25.6714,
+        longitude: -100.3098
+    )
 
     override init() {
         super.init()
@@ -104,8 +109,10 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
     func analyze(image: UIImage) {
         capturedImage = image
         scanResult = nil
+        motionResult = nil
         errorMessage = nil
         isAnalyzing = true
+        isMeasuringMotion = false
 
         guard let cgImage = image.cgImage else {
             errorMessage = "No se pudo procesar la imagen."
@@ -179,7 +186,7 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
     }
 
     func useScan() {
-        guard let result = scanResult else { return }
+        guard let result = scanResult, !isMeasuringMotion else { return }
         saveToMap(result: result, isDemo: isUsingDemo)
     }
 
@@ -189,6 +196,8 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
         showSuccess = false
         errorMessage = nil
         isUsingDemo = false
+        motionResult = nil
+        isMeasuringMotion = false
     }
 
     // MARK: - CLLocationManagerDelegate
@@ -203,48 +212,107 @@ final class ScanViewModel: NSObject, ObservableObject, CLLocationManagerDelegate
 
 extension ScanViewModel {
 
-    /// Guarda el resultado del scan en HeatmapStore y sube en background a Supabase.
+    /// Mide el terreno con Core Motion, fusiona visión + motion + recencia
+    /// y luego guarda el tile con scores reales.
     func saveToMap(result: ScanResult, isDemo: Bool) {
-        let reasons: [String]
-        if isDemo {
-            reasons = result.reasons.map { $0 + " (simulado)" }
-        } else {
-            reasons = result.reasons
-        }
+        Task { @MainActor in
+            isMeasuringMotion = true
+            defer { isMeasuringMotion = false }
 
-        let srcType: TileSourceType = isDemo ? .mock : .camera
-        let profile = ProfileService.shared.currentProfile.rawValue
+            // 1. Medir terreno si no es demo
+            var terrain: TerrainMotionResult? = nil
+            if !isDemo {
+                terrain = await MotionAccessibilityService.shared.measureTerrain()
+            }
 
-        HeatmapStore.shared.addTile(
-            coordinate:       result.coordinate,
-            score:            result.accessibilityScore,
-            confidence:       Double(result.confidence),
-            reasons:          reasons,
-            vibrationScore:   nil,
-            slopeScore:       nil,
-            passabilityScore: nil,
-            sourceType:       srcType,
-            detectedLabel:    result.label,
-            profileUsed:      profile
-        )
+            motionResult = terrain
 
-        if let lastTile = HeatmapStore.shared.scannedTiles.last {
-            let demo = isDemo
-            Task {
-                do {
-                    try await TileAPIService.shared.saveTile(lastTile, isSimulated: demo)
-                } catch {
-                    // log only — fire-and-forget
+            let coordinate = result.coordinate
+
+            // 2. Buscar tile previo en esa zona
+            let existingTile = HeatmapStore.shared.tileNear(coordinate)
+
+            // 3. Calcular score fusionado
+            let input = ScoringInput(
+                detectedLabel:    isDemo ? nil : result.label,
+                visualConfidence: Double(result.confidence),
+                vibrationScore:   terrain?.accessibilityVibrationScore,
+                slopeScore:       terrain?.accessibilitySlopeScore,
+                motionConfidence: terrain?.motionConfidence,
+                profile:          ProfileService.shared.currentProfile,
+                existingTile:     existingTile,
+                userConfirmation: nil
+            )
+
+            let scored = LayerScoringEngine.score(input)
+
+            // 4. Decidir si este scan se acepta, se fusiona o se ignora
+            let trust = TileConfidenceService.shouldTrustNewScan(
+                newConfidence: scored.confidenceScore,
+                existingTile: existingTile
+            )
+
+            switch trust {
+            case .accept, .merge:
+                break
+
+            case .ignore(let reason):
+                print("[Scoring] Scan ignorado: \(reason)")
+
+                withAnimation {
+                    showSuccess = true
+                }
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                    self.reset()
+                }
+                return
+            }
+
+            // 5. Reasons finales
+            let reasons: [String]
+            if isDemo {
+                reasons = scored.reasons.map { $0 + " (simulado)" }
+            } else {
+                reasons = scored.reasons
+            }
+
+            // 6. Source type final
+            let sourceType: TileSourceType
+            if isDemo {
+                sourceType = .mock
+            } else {
+                sourceType = scored.effectiveSourceType
+            }
+
+            // 7. Guardar tile con scores fusionados
+            HeatmapStore.shared.addTile(
+                coordinate:       coordinate,
+                score:            scored.accessibilityScore,
+                confidence:       scored.confidenceScore,
+                reasons:          reasons,
+                vibrationScore:   terrain?.accessibilityVibrationScore,
+                slopeScore:       terrain?.accessibilitySlopeScore,
+                passabilityScore: scored.passabilityScore,
+                sourceType:       sourceType,
+                detectedLabel:    result.label,
+                profileUsed:      ProfileService.shared.currentProfile.rawValue
+            )
+
+            // 8. Upload en background
+            if let lastTile = HeatmapStore.shared.scannedTiles.last {
+                Task {
+                    try? await TileAPIService.shared.saveTile(lastTile, isSimulated: isDemo)
                 }
             }
-        }
 
-        withAnimation {
-            showSuccess = true
-        }
+            withAnimation {
+                showSuccess = true
+            }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
-            self.reset()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                self.reset()
+            }
         }
     }
 }
@@ -330,6 +398,7 @@ struct ScanView: View {
             Spacer()
 
             CaptureButton(color: primaryColor)
+                .allowsHitTesting(false)
                 .padding(.bottom, 48)
         }
     }
@@ -359,6 +428,9 @@ struct ScanView: View {
                         if vm.isAnalyzing {
                             analyzingBadge
                                 .padding(.bottom, 20)
+                        } else if vm.isMeasuringMotion {
+                            measuringBadge
+                                .padding(.bottom, 20)
                         }
                     }
                 }
@@ -369,6 +441,8 @@ struct ScanView: View {
                     VStack(spacing: 0) {
                         if vm.isAnalyzing {
                             analyzingPlaceholder
+                        } else if vm.isMeasuringMotion {
+                            measuringTerrainPlaceholder
                         } else if let result = vm.scanResult {
                             predictionCard(result: result)
                         } else if let error = vm.errorMessage {
@@ -515,6 +589,8 @@ struct ScanView: View {
                     .background(primaryColor, in: RoundedRectangle(cornerRadius: 16))
                     .shadow(color: primaryColor.opacity(0.4), radius: 10, x: 0, y: 4)
                 }
+                .disabled(vm.isMeasuringMotion)
+                .opacity(vm.isMeasuringMotion ? 0.6 : 1)
                 .accessibilityLabel("Usar esta clasificación y agregarla al mapa")
             }
             .padding(.horizontal, 24)
@@ -543,6 +619,22 @@ struct ScanView: View {
         .accessibilityLabel("Analizando la imagen con inteligencia artificial")
     }
 
+    var measuringBadge: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .tint(.white)
+                .scaleEffect(0.8)
+
+            Text("Midiendo terreno...")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.black.opacity(0.6), in: Capsule())
+        .accessibilityLabel("Midiendo el terreno con sensores de movimiento")
+    }
+
     var analyzingPlaceholder: some View {
         VStack(spacing: 16) {
             ProgressView()
@@ -552,6 +644,25 @@ struct ScanView: View {
             Text("Clasificando superficie...")
                 .font(.system(size: 16, weight: .medium, design: .rounded))
                 .foregroundColor(.white.opacity(0.7))
+        }
+        .padding(.top, 40)
+    }
+
+    var measuringTerrainPlaceholder: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .tint(primaryColor)
+                .scaleEffect(1.4)
+
+            Text("Midiendo terreno...")
+                .font(.system(size: 16, weight: .medium, design: .rounded))
+                .foregroundColor(.white.opacity(0.8))
+
+            Text("Estamos calculando vibración, inclinación y transitabilidad.")
+                .font(.system(size: 13, design: .rounded))
+                .foregroundColor(.white.opacity(0.55))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
         }
         .padding(.top, 40)
     }
@@ -680,7 +791,6 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         captureButton.translatesAutoresizingMaskIntoConstraints = false
         captureButton.backgroundColor = .clear
 
-        // Aro exterior
         captureButton.layer.cornerRadius = 38
         captureButton.layer.borderWidth = 2.5
         captureButton.layer.borderColor = UIColor.white.withAlphaComponent(0.85).cgColor
@@ -689,7 +799,6 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         captureButton.layer.shadowRadius = 10
         captureButton.layer.shadowOffset = CGSize(width: 0, height: 4)
 
-        // Círculo interior
         let inner = UIView()
         inner.translatesAutoresizingMaskIntoConstraints = false
         inner.isUserInteractionEnabled = false
@@ -704,7 +813,6 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         inner.layer.borderColor = UIColor.white.withAlphaComponent(0.35).cgColor
         inner.clipsToBounds = true
 
-        // Highlight superior para efecto glass
         let highlight = CAGradientLayer()
         highlight.colors = [
             UIColor.white.withAlphaComponent(0.45).cgColor,
@@ -734,6 +842,7 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         captureButton.addTarget(self, action: #selector(capture), for: .touchUpInside)
         captureButton.accessibilityLabel = "Tomar foto"
     }
+
     @objc private func capture() {
         UIView.animate(withDuration: 0.12, animations: {
             self.captureButton.transform = CGAffineTransform(scaleX: 0.92, y: 0.92)
@@ -748,6 +857,7 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         let settings = AVCapturePhotoSettings()
         output.capturePhoto(with: settings, delegate: self)
     }
+
     func photoOutput(
         _ output: AVCapturePhotoOutput,
         didFinishProcessingPhoto photo: AVCapturePhoto,
@@ -766,13 +876,12 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
 }
 
 // MARK: - Decorative Capture Button
+
 struct CaptureButton: View {
     let color: Color
-    @GestureState private var isPressed = false
 
     var body: some View {
         ZStack {
-            // Halo exterior sutil
             Circle()
                 .fill(
                     RadialGradient(
@@ -789,7 +898,6 @@ struct CaptureButton: View {
                 .frame(width: 92, height: 92)
                 .blur(radius: 2)
 
-            // Aro exterior
             Circle()
                 .stroke(
                     LinearGradient(
@@ -806,7 +914,6 @@ struct CaptureButton: View {
                 .frame(width: 74, height: 74)
                 .shadow(color: color.opacity(0.25), radius: 10, x: 0, y: 4)
 
-            // Círculo interior
             Circle()
                 .fill(
                     LinearGradient(
@@ -839,22 +946,18 @@ struct CaptureButton: View {
                         .padding(6)
                 )
                 .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 5)
-                .scaleEffect(isPressed ? 0.88 : 1)
 
-            // Reflejo pequeño tipo glass
             Circle()
                 .fill(.white.opacity(0.22))
                 .frame(width: 18, height: 18)
                 .offset(x: -14, y: -14)
                 .blur(radius: 0.5)
-                .opacity(isPressed ? 0.7 : 1)
         }
         .frame(width: 92, height: 92)
-        .scaleEffect(isPressed ? 0.96 : 1)
-        .animation(.spring(response: 0.22, dampingFraction: 0.72), value: isPressed)
         .accessibilityHidden(true)
     }
 }
+
 #Preview {
     ScanView()
 }

@@ -190,14 +190,12 @@ class HeatmapStore: ObservableObject {
     @Published private(set) var baseTiles: [AccessibilityTile] = []
     @Published private(set) var scannedTiles: [AccessibilityTile] = []
 
-    /// Única propiedad que deben leer MapView y RouteViewModel.
     var allTiles: [AccessibilityTile] { baseTiles + scannedTiles }
 
     init() {
         loadBaseTiles()
         let saved = PersistenceService.shared.loadScannedTiles()
         if !saved.isEmpty { scannedTiles = saved }
-        // Remote tiles are loaded by MapView's .task modifier
     }
 
     @MainActor
@@ -208,7 +206,6 @@ class HeatmapStore: ObservableObject {
             )
             guard !remote.isEmpty else { return }
             let existing = allTiles
-            // Dedup: skip any remote tile within ~5 m of an existing tile
             let newTiles = remote
                 .map { $0.toAccessibilityTile() }
                 .filter { remoteTile in
@@ -222,13 +219,11 @@ class HeatmapStore: ObservableObject {
                 baseTiles.append(contentsOf: newTiles)
             }
         } catch {
-            // Non-fatal; tile fetch failure never blocks UX
         }
     }
 
     private func loadBaseTiles() {
         let origin = CLLocationCoordinate2D(latitude: 25.6714, longitude: -100.3098)
-        // (dlat, dlon, score, conf, reasons, vibration, slope, passability, label)
         let configs: [(Double, Double, Int, Double, [String], Double?, Double?, Double?, String)] = [
             ( 0.000,  0.000, 85, 0.90, [],                                              0.9, 0.95, 0.90, "flat"),
             ( 0.001,  0.001, 78, 0.80, [],                                              0.8, 0.85, 0.82, "flat"),
@@ -243,6 +238,7 @@ class HeatmapStore: ObservableObject {
             ( 0.000, -0.003, 10, 0.90, ["Vibración elevada", "Desvíos frecuentes", "Inclinación detectada"], 0.05, 0.20, 0.10, "stairs"),
             ( 0.004, -0.001, 80, 0.85, [],                                              0.85, 0.90, 0.83, "flat"),
         ]
+
         baseTiles = configs.map { dlat, dlon, score, conf, reasons, vib, slope, pass, label in
             AccessibilityTile(
                 coordinate: CLLocationCoordinate2D(
@@ -264,8 +260,6 @@ class HeatmapStore: ObservableObject {
         }
     }
 
-    /// Agrega un tile escaneado por el usuario.
-    /// Acepta los nuevos campos granulares opcionales.
     func addTile(
         coordinate: CLLocationCoordinate2D,
         score: Int,
@@ -293,11 +287,29 @@ class HeatmapStore: ObservableObject {
             createdAt: Date()
         )
         scannedTiles.append(tile)
-        // Persistencia: guardar inmediatamente al disco
         PersistenceService.shared.saveScannedTiles(scannedTiles)
     }
-}
 
+    func updateTile(id: UUID, newScore: ScoringOutput) {
+        if let index = scannedTiles.firstIndex(where: { $0.id == id }) {
+            scannedTiles[index].accessibilityScore = newScore.accessibilityScore
+            scannedTiles[index].confidenceScore = newScore.confidenceScore
+            scannedTiles[index].passabilityScore = newScore.passabilityScore
+            scannedTiles[index].reasons = newScore.reasons
+            scannedTiles[index].sourceType = newScore.effectiveSourceType
+
+            PersistenceService.shared.saveScannedTiles(scannedTiles)
+        }
+
+        if let index = baseTiles.firstIndex(where: { $0.id == id }) {
+            baseTiles[index].accessibilityScore = newScore.accessibilityScore
+            baseTiles[index].confidenceScore = newScore.confidenceScore
+            baseTiles[index].passabilityScore = newScore.passabilityScore
+            baseTiles[index].reasons = newScore.reasons
+            baseTiles[index].sourceType = .userConfirmation
+        }
+    }
+}
 // MARK: - Map ViewModel
 
 @MainActor
@@ -888,12 +900,52 @@ struct BottomSheetView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("¿Pasaste bien aquí?")
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
+
                     HStack(spacing: 12) {
                         FeedbackButton(label: "Sí", icon: "hand.thumbsup", color: primaryColor) {
-                            withAnimation { userFeedback[tile.id] = true }
+                            let input = ScoringInput(
+                                detectedLabel:    tile.detectedLabel,
+                                visualConfidence: tile.confidenceScore,
+                                vibrationScore:   tile.vibrationScore,
+                                slopeScore:       tile.slopeScore,
+                                motionConfidence: nil,
+                                profile:          ProfileService.shared.currentProfile,
+                                existingTile:     tile,
+                                userConfirmation: true
+                            )
+
+                            let rescored = LayerScoringEngine.score(input)
+
+                            HeatmapStore.shared.updateTile(id: tile.id, newScore: rescored)
+
+                            withAnimation {
+                                userFeedback[tile.id] = true
+                            }
                         }
-                        FeedbackButton(label: "No", icon: "hand.thumbsdown", color: Color(red: 1, green: 0.42, blue: 0.42)) {
-                            withAnimation { userFeedback[tile.id] = false }
+
+                        FeedbackButton(
+                            label: "No",
+                            icon: "hand.thumbsdown",
+                            color: Color(red: 1, green: 0.42, blue: 0.42)
+                        ) {
+                            let input = ScoringInput(
+                                detectedLabel:    tile.detectedLabel,
+                                visualConfidence: tile.confidenceScore,
+                                vibrationScore:   tile.vibrationScore,
+                                slopeScore:       tile.slopeScore,
+                                motionConfidence: nil,
+                                profile:          ProfileService.shared.currentProfile,
+                                existingTile:     tile,
+                                userConfirmation: false
+                            )
+
+                            let rescored = LayerScoringEngine.score(input)
+
+                            HeatmapStore.shared.updateTile(id: tile.id, newScore: rescored)
+
+                            withAnimation {
+                                userFeedback[tile.id] = false
+                            }
                         }
                     }
                 }
