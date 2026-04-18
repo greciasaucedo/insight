@@ -67,79 +67,86 @@ struct ProfileView: View {
 
     // MARK: - Header
 
+    @ViewBuilder
+    private var avatarImage: some View {
+        if let img = localAvatarImage {
+            Image(uiImage: img).resizable().scaledToFill()
+        } else if let urlStr = authService.currentUser?.avatarURL,
+                  let url = URL(string: urlStr) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let img): img.resizable().scaledToFill()
+                default: avatarPlaceholder
+                }
+            }
+        } else {
+            avatarPlaceholder
+        }
+    }
+
+    private var avatarPickerView: some View {
+        ZStack(alignment: .bottomTrailing) {
+            avatarImage
+                .frame(width: 88, height: 88)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(themeManager.primaryColor.opacity(0.35), lineWidth: 2))
+                .overlay {
+                    if isUploadingAvatar {
+                        Circle().fill(.black.opacity(0.35))
+                        ProgressView().tint(.white)
+                    }
+                }
+                .contextMenu {
+                    if localAvatarImage != nil || authService.currentUser?.avatarURL != nil {
+                        Button(role: .destructive) {
+                            localAvatarImage = nil
+                            Task { try? await AuthService.shared.removeAvatar() }
+                        } label: {
+                            Label("Eliminar foto", systemImage: "trash")
+                        }
+                    }
+                }
+
+            PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                Image(systemName: "camera.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(7)
+                    .background(themeManager.primaryColor, in: Circle())
+                    .shadow(color: .black.opacity(0.2), radius: 3, x: 0, y: 1)
+            }
+            .disabled(isUploadingAvatar)
+        }
+        .onChange(of: selectedPhoto) { _, item in
+            Task { await handleAvatarSelection(item) }
+        }
+    }
+
+    private var headerInfoRows: some View {
+        VStack(spacing: 10) {
+            if let user = authService.currentUser {
+                profileInfoRow(icon: "person.fill",
+                               text: user.displayName.isEmpty ? "—" : user.displayName)
+                profileInfoRow(icon: "phone.fill",
+                               text: user.phone.isEmpty ? "—" : user.phone)
+            }
+            if profileService.selectedOptions.isEmpty {
+                profileInfoRow(icon: profileService.currentProfile.icon,
+                               text: profileService.currentProfile.displayName)
+            } else {
+                ForEach(profileService.selectedOptions, id: \.self) { option in
+                    profileInfoRow(icon: option.icon, text: option.title)
+                }
+            }
+        }
+    }
+
     private var headerSection: some View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 16) {
+                avatarPickerView
 
-                // Avatar big, centered
-                ZStack(alignment: .bottomTrailing) {
-                    Group {
-                        if let img = localAvatarImage {
-                            Image(uiImage: img)
-                                .resizable().scaledToFill()
-                        } else if let urlStr = authService.currentUser?.avatarURL,
-                                  let url   = URL(string: urlStr) {
-                            AsyncImage(url: url) { phase in
-                                switch phase {
-                                case .success(let img): img.resizable().scaledToFill()
-                                default:                avatarPlaceholder
-                                }
-                            }
-                        } else {
-                            avatarPlaceholder
-                        }
-                    }
-                    .frame(width: 88, height: 88)
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(themeManager.primaryColor.opacity(0.35), lineWidth: 2))
-                    .overlay {
-                        if isUploadingAvatar {
-                            Circle().fill(.black.opacity(0.35))
-                            ProgressView().tint(.white)
-                        }
-                    }
-                    .contextMenu {
-                        if localAvatarImage != nil || authService.currentUser?.avatarURL != nil {
-                            Button(role: .destructive) {
-                                localAvatarImage = nil
-                                Task { try? await AuthService.shared.removeAvatar() }
-                            } label: {
-                                Label("Eliminar foto", systemImage: "trash")
-                            }
-                        }
-                    }
-
-                    PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                        Image(systemName: "camera.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(7)
-                            .background(themeManager.primaryColor, in: Circle())
-                            .shadow(color: .black.opacity(0.2), radius: 3, x: 0, y: 1)
-                    }
-                    .disabled(isUploadingAvatar)
-                }
-                .onChange(of: selectedPhoto) { _, item in
-                    Task { await handleAvatarSelection(item) }
-                }
-
-                // Info rows
-                VStack(spacing: 10) {
-                    if let user = authService.currentUser {
-                        profileInfoRow(icon: "person.fill",
-                                       text: user.displayName.isEmpty ? "—" : user.displayName)
-                        profileInfoRow(icon: "phone.fill",
-                                       text: user.phone.isEmpty ? "—" : user.phone)
-                    }
-                    if profileService.selectedOptions.isEmpty {
-                        profileInfoRow(icon: profileService.currentProfile.icon,
-                                       text: profileService.currentProfile.displayName)
-                    } else {
-                        ForEach(profileService.selectedOptions, id: \.self) { option in
-                            profileInfoRow(icon: option.icon, text: option.title)
-                        }
-                    }
-                }
+                headerInfoRows
             }
             .frame(maxWidth: .infinity)
             .padding(18)
