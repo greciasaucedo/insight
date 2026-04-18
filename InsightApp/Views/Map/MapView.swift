@@ -6,7 +6,6 @@
 
 
 
-
 import SwiftUI
 import MapKit
 import CoreHaptics
@@ -95,7 +94,12 @@ class HeatmapStore: ObservableObject {
     /// Única propiedad que deben leer MapView y RouteViewModel.
     var allTiles: [AccessibilityTile] { baseTiles + scannedTiles }
 
-    init() { loadBaseTiles() }
+    init() {
+        loadBaseTiles()
+        // Persistencia (Item 12): restaurar scans del usuario al arrancar la app
+        let saved = PersistenceService.shared.loadScannedTiles()
+        if !saved.isEmpty { scannedTiles = saved }
+    }
 
     private func loadBaseTiles() {
         let origin = CLLocationCoordinate2D(latitude: 25.6714, longitude: -100.3098)
@@ -135,6 +139,8 @@ class HeatmapStore: ObservableObject {
             reasons: reasons,
             isUserScanned: true
         ))
+        // Persistencia (Item 12): guardar inmediatamente al disco
+        PersistenceService.shared.saveScannedTiles(scannedTiles)
     }
 }
 
@@ -566,11 +572,17 @@ struct BottomSheetView: View {
                         Text(tile.accessibilityLevel.label)
                             .font(.system(size: 20, weight: .bold, design: .rounded))
                         if tile.isUserScanned {
-                            Label("Escaneado", systemImage: "camera.fill")
+                            let isSimulated = tile.reasons.first?.contains("(simulado)") ?? false
+                            // Badge "Escaneado" (cámara real) o "Demo" (clasificación simulada)
+                            Label(isSimulated ? "Demo" : "Escaneado",
+                                  systemImage: isSimulated ? "wand.and.stars" : "camera.fill")
                                 .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                .foregroundColor(primaryColor)
+                                .foregroundColor(isSimulated ? .orange : primaryColor)
                                 .padding(.horizontal, 8).padding(.vertical, 3)
-                                .background(primaryColor.opacity(0.12), in: Capsule())
+                                .background(
+                                    (isSimulated ? Color.orange : primaryColor).opacity(0.12),
+                                    in: Capsule()
+                                )
                         }
                     }
                     Text("Confianza: \(tile.confidenceLabel)")

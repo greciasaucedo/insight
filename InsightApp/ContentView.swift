@@ -8,9 +8,19 @@
 import SwiftUI
 
 struct ContentView: View {
+
+    // Guarda si el usuario ya terminó el onboarding
+    @AppStorage("didFinishOnboarding") private var didFinishOnboarding = false
+
     var body: some View {
-        NavigationStack {
-            WelcomeView()
+        if didFinishOnboarding {
+            // Si ya terminó → entra directo al mapa
+            MapView()
+        } else {
+            // Si no → muestra onboarding
+            NavigationStack {
+                WelcomeView()
+            }
         }
     }
 }

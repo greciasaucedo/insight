@@ -119,6 +119,8 @@ final class RouteViewModel: NSObject, ObservableObject, CLLocationManagerDelegat
         selectedDestination = destination
         isRouteActive = false
         lastKnownTileCount = HeatmapStore.shared.allTiles.count
+        // Persistencia (Item 12): guardar último destino elegido
+        PersistenceService.shared.saveLastDestination(name: destination.name)
         fetchRoutes(to: destination)
     }
 

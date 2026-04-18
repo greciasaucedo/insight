@@ -4,9 +4,13 @@
 //
 //  Created by Grecia Saucedo on 17/04/26.
 //
+
 import SwiftUI
 
 struct AllowsView: View {
+    
+    // Controla si ya terminó onboarding
+    @AppStorage("didFinishOnboarding") private var didFinishOnboarding = false
     
     let primaryColor = Color(red: 136/255, green: 205/255, blue: 212/255) // #88CDD4
     
@@ -55,8 +59,10 @@ struct AllowsView: View {
             Spacer()
             
             VStack(spacing: 12) {
+                
                 Button(action: {
-                    // Aquí luego pedimos permisos reales
+                    // Aquí luego puedes pedir permisos reales
+                    didFinishOnboarding = true
                 }) {
                     Text("Permitir acceso")
                         .font(.headline)
@@ -68,7 +74,8 @@ struct AllowsView: View {
                 }
                 
                 Button(action: {
-                    // Continuar después o saltar
+                    // También permite continuar sin permisos
+                    didFinishOnboarding = true
                 }) {
                     Text("Ahora no")
                         .font(.headline)
