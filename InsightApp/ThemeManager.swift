@@ -9,6 +9,7 @@ import Combine
 
 final class ThemeManager: ObservableObject {
     @Published var selectedMode: ColorAccessibilityMode = .defaultMode
+    static let shared = ThemeManager()
 
     var primaryColor: Color {
         switch selectedMode {
