@@ -1,8 +1,8 @@
-# Insight
 
 <div align="center">
   <img src="InsightApp/Assets/Assets.xcassets/AppIcon.appiconset/insight_logo.png" alt="Insight App Icon" width="250" />
-  
+
+  # Insight
   ## Navigate Accessibly. Navigate Safely.
   
   **A SwiftUI iOS app empowering users with accessibility needs to navigate confidently**
