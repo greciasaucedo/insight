@@ -1,7 +1,7 @@
 # Insight
 
 <div align="center">
-  <img src="InsightApp/Assets/Assets.xcassets/AppIcon.appiconset/insight_logo.png" alt="Insight App Icon" width="200" />
+  <img src="InsightApp/Assets/Assets.xcassets/AppIcon.appiconset/insight_logo.png" alt="Insight App Icon" width="250" />
   
   ## Navigate Accessibly. Navigate Safely.
   
