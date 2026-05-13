@@ -1,0 +1,26 @@
+# Git attributes for safety
+
+# Ensure line endings are consistent
+* text=auto
+*.swift text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.plist text eol=lf
+
+# Binary files
+*.pbxproj binary
+*.xcassets binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+
+# Mark sensitive files for extra scrutiny
+SupabaseConfig.swift diff=config merge=union
+**/config.swift diff=config merge=union
+**/secrets.* diff=config merge=union
+**/credentials.* diff=config merge=union
+.env* diff=config merge=union

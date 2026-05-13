@@ -65,10 +65,31 @@ struct ProfileView: View {
                     }
                 }
             }
+            .onAppear {
+                if localAvatarImage == nil {
+                    localAvatarImage = ProfileView.loadAvatarFromDisk()
+                }
+            }
         }
     }
 
     // MARK: - Header
+
+    private static var avatarFileURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("insight_avatar.jpg")
+    }
+
+    private static func saveAvatarToDisk(_ image: UIImage) {
+        if let jpeg = image.jpegData(compressionQuality: 0.85) {
+            try? jpeg.write(to: avatarFileURL, options: .atomic)
+        }
+    }
+
+    private static func loadAvatarFromDisk() -> UIImage? {
+        guard FileManager.default.fileExists(atPath: avatarFileURL.path) else { return nil }
+        return UIImage(contentsOfFile: avatarFileURL.path)
+    }
 
     @ViewBuilder
     private var avatarImage: some View {
@@ -217,6 +238,7 @@ struct ProfileView: View {
         guard let data  = try? await item.loadTransferable(type: Data.self),
               let uiImg = UIImage(data: data) else { return }
         localAvatarImage = uiImg
+        ProfileView.saveAvatarToDisk(uiImg)
         await uploadLocalAvatar()
     }
 
@@ -224,6 +246,7 @@ struct ProfileView: View {
     private func uploadLocalAvatar() async {
         guard let uiImg = localAvatarImage,
               let jpeg  = uiImg.jpegData(compressionQuality: 0.75) else { return }
+        ProfileView.saveAvatarToDisk(uiImg)
         isUploadingAvatar = true
         do { _ = try await AuthService.shared.uploadAvatar(jpeg) } catch {}
         isUploadingAvatar = false

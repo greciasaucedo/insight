@@ -35,7 +35,23 @@ Icon
 Pods/
 Podfile.lock
 
-# Supabase credentials — NEVER commit either of these files
-# Copy SupabaseConfig.example.swift → SupabaseConfig.swift and fill in your values
+# Supabase credentials — NEVER commit
+# Copy SupabaseConfig.swift.example → SupabaseConfig.swift and fill in your values
 InsightApp/Views/Services/SupabaseConfig.swift
 InsightApp/Config/SupabaseConfig.swift
+
+# Environment files & sensitive configs
+.env
+.env.local
+.env.*.local
+*.plist
+!Info.plist
+!PrivacyInfo.xcprivacy
+
+# API keys, tokens, credentials
+**/config.swift
+**/Config.swift
+**/secrets.*
+**/credentials.*
+**/*_key*
+**/*_secret*
